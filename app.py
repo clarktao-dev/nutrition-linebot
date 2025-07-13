@@ -2064,53 +2064,115 @@ def generate_weekly_report(event):
     if not weekly_meals:
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="本週還沒有飲食記錄。開始記錄你的飲食，下週就能看到詳細報告了！")
+            TextSendMessage(text="本週還沒有飲食記錄。開始記錄你的飲食，就能看到詳細報告了！")
         )
         return
     
-    # 生成週報告
+    # 計算統計數據
+    unique_dates = set(meal[3][:10] for meal in weekly_meals)  # 取日期部分
+    record_days = len(unique_dates)
+    total_meals = len(weekly_meals)
+    
+    # 統計餐型分佈
+    meal_counts = {}
+    meal_details = []
+    for meal in weekly_meals:
+        meal_type = meal[0]
+        meal_desc = meal[1]
+        meal_date = meal[3][:10]  # 取日期
+        meal_time = meal[3][11:16]  # 取時間
+        
+        meal_counts[meal_type] = meal_counts.get(meal_type, 0) + 1
+        meal_details.append(f"{meal_date} {meal_time} {meal_type}：{meal_desc}")
+    
+    # 生成增強版報告
     try:
         from openai import OpenAI
         client = OpenAI(api_key=OPENAI_API_KEY)
         
-        # 準備本週飲食資料
-        meals_by_type = {}
+        # 準備詳細的飲食資料
+        meals_by_date = {}
         for meal in weekly_meals:
-            meal_type = meal[0]
-            if meal_type not in meals_by_type:
-                meals_by_type[meal_type] = []
-            meals_by_type[meal_type].append(meal[1])
+            date = meal[3][:10]
+            if date not in meals_by_date:
+                meals_by_date[date] = []
+            meals_by_date[date].append(f"{meal[0]}：{meal[1]}")
         
         meals_summary = ""
-        for meal_type, meals in meals_by_type.items():
-            meals_summary += f"\n{meal_type}：\n"
-            for meal in meals[:3]:  # 只顯示前3個
-                meals_summary += f"- {meal}\n"
+        for date, meals in sorted(meals_by_date.items()):
+            meals_summary += f"\n📅 {date}：\n"
+            for meal in meals:
+                meals_summary += f"  • {meal}\n"
         
-        diabetes_context = f"糖尿病類型：{user[12]}" if user[12] else "無糖尿病"
+        # 安全取得用戶資料
+        try:
+            name = user[1] if len(user) > 1 and user[1] else "用戶"
+            age = user[2] if len(user) > 2 and user[2] else 30
+            gender = user[3] if len(user) > 3 and user[3] else "未設定"
+            height = user[4] if len(user) > 4 and user[4] else 170
+            weight = user[5] if len(user) > 5 and user[5] else 70
+            activity = user[6] if len(user) > 6 and user[6] else "中等活動量"
+            goals = user[7] if len(user) > 7 and user[7] else "維持健康"
+            restrictions = user[8] if len(user) > 8 and user[8] else "無"
+            diabetes = user[12] if len(user) > 12 and user[12] else None
+        except (IndexError, TypeError):
+            name, age, gender = "用戶", 30, "未設定"
+            height, weight = 170, 70
+            activity, goals, restrictions = "中等活動量", "維持健康", "無"
+            diabetes = None
+        
+        diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
+        
         user_context = f"""
-用戶資料：{user[1]}，{user[2]}歲，{user[3]}
-身高：{user[4]}cm，體重：{user[5]}kg，體脂率：{user[6] or 0:.1f}%
-活動量：{user[9]}
-健康目標：{user[10]}
-飲食限制：{user[11]}
+用戶資料：{name}，{age}歲，{gender}
+身高：{height}cm，體重：{weight}kg
+活動量：{activity}
+健康目標：{goals}
+飲食限制：{restrictions}
 {diabetes_context}
 
-本週飲食記錄（共{len(weekly_meals)}餐）：
+記錄期間：{record_days}天（共{total_meals}餐）
+餐型分佈：{dict(meal_counts)}
+
+詳細飲食記錄：
 {meals_summary}
 """
         
         report_prompt = """
-作為專業營養師，請為用戶生成本週營養分析報告：
+作為專業營養師，請為用戶生成飲食分析報告（即使記錄天數不滿7天）：
 
-1. 本週飲食總結與亮點
-2. 營養攝取評估（優點與不足）
-3. 與健康目標的對比分析
-4. 具體改善建議（3-5點，包含明確份量）
-5. 下週飲食規劃建議
-6. 糖尿病血糖控制評估（如適用）
+重要原則：
+1. 基於實際記錄天數分析，不需要7天才能分析
+2. 使用純文字格式，多用表情符號
+3. 不要使用 # * ** 等符號
 
-請提供具體、實用的建議，語調要專業而親切。
+請提供：
+
+🔍 記錄期間飲食分析：
+分析用戶在記錄期間的飲食模式
+評估營養攝取的均衡性
+指出飲食的優點和需要改善的地方
+
+💡 個人化建議：
+基於用戶健康目標提供具體建議
+針對糖尿病患者提供血糖控制建議（如適用）
+考慮用戶的飲食限制和偏好
+
+🎯 具體改善方向：
+3-5個實用的改善建議
+每個建議要包含具體的執行方法
+建議的食物選擇和份量
+
+📈 未來飲食規劃：
+下週的飲食重點
+如何逐步改善飲食習慣
+長期健康目標的達成策略
+
+🏆 鼓勵與肯定：
+肯定用戶開始記錄飲食的行為
+鼓勵持續記錄和改善
+
+請提供實用、正面、專業的建議，讓用戶感受到進步和鼓勵。
 """
         
         response = client.chat.completions.create(
@@ -2119,51 +2181,87 @@ def generate_weekly_report(event):
                 {"role": "system", "content": report_prompt},
                 {"role": "user", "content": user_context}
             ],
-            max_tokens=1000,
+            max_tokens=1200,
             temperature=0.7
         )
         
-        report = response.choices[0].message.content
+        ai_analysis = response.choices[0].message.content
         
-        final_report = f"""📊 本週營養分析報告
-記錄天數：{len(set(meal[3][:10] for meal in weekly_meals))} 天
-總餐數：{len(weekly_meals)} 餐
+        # 組合完整報告
+        final_report = f"""📊 飲食分析報告
 
-{report}
+⏰ 記錄期間：{record_days} 天
+🍽️ 總餐數：{total_meals} 餐
+📈 平均每日：{total_meals/record_days:.1f} 餐
 
-💡 持續記錄飲食，讓我為你提供更準確的營養建議！"""
-        
-    except Exception as e:
-        final_report = f"""📊 本週營養記錄摘要
-記錄天數：{len(set(meal[3][:10] for meal in weekly_meals))} 天
-總餐數：{len(weekly_meals)} 餐
-
-🎯 **飲食記錄統計**：
+🥘 餐型統計：
 """
         
-        # 統計餐型分佈
-        meal_counts = {}
-        for meal in weekly_meals:
-            meal_type = meal[0]
-            meal_counts[meal_type] = meal_counts.get(meal_type, 0) + 1
+        for meal_type, count in meal_counts.items():
+            percentage = (count / total_meals * 100)
+            final_report += f"• {meal_type}：{count} 次 ({percentage:.0f}%)\n"
+        
+        final_report += f"\n{ai_analysis}\n\n💪 持續記錄飲食，讓我為你提供更準確的營養建議！"
+        
+    except Exception as e:
+        print(f"AI分析失敗：{e}")
+        
+        # 備用詳細報告
+        final_report = f"""📊 飲食記錄分析報告
+
+⏰ 記錄期間：{record_days} 天
+🍽️ 總餐數：{total_meals} 餐
+📈 平均每日：{total_meals/record_days:.1f} 餐
+
+🥘 餐型統計：
+"""
         
         for meal_type, count in meal_counts.items():
-            final_report += f"• {meal_type}：{count} 次\n"
+            percentage = (count / total_meals * 100)
+            final_report += f"• {meal_type}：{count} 次 ({percentage:.0f}%)\n"
         
         final_report += f"""
-💡 **一般建議**：
-• 保持規律的三餐時間
-• 增加蔬果攝取
-• 注意營養均衡
-• 適量補充水分
-• 糖尿病患者注意血糖監測
 
-詳細分析功能暫時無法使用，請稍後再試。"""
+📅 最近記錄：
+"""
+        
+        # 顯示最近5筆記錄
+        for meal in weekly_meals[:5]:
+            date = meal[3][:10]
+            time = meal[3][11:16]
+            final_report += f"• {date} {time} {meal[0]}：{meal[1][:30]}{'...' if len(meal[1]) > 30 else ''}\n"
+        
+        if len(weekly_meals) > 5:
+            final_report += f"• 還有 {len(weekly_meals)-5} 筆記錄...\n"
+        
+        final_report += f"""
+
+💡 基於你的記錄建議：
+
+🎯 飲食模式觀察：
+- 記錄了 {record_days} 天的飲食，平均每天 {total_meals/record_days:.1f} 餐
+- 最常記錄的是 {max(meal_counts, key=meal_counts.get)}
+
+📈 改善建議：
+- 持續記錄有助於了解飲食習慣
+- 試著增加蔬菜和蛋白質的攝取
+- 保持規律的用餐時間
+"""
+        
+        if diabetes:
+            final_report += "• 糖尿病患者建議少量多餐，注意血糖監測\n"
+        
+        final_report += f"""
+🏆 很棒的開始！
+記錄飲食是健康管理的第一步，你已經在正確的道路上了！
+
+💪 繼續加油，我會陪伴你達成健康目標！"""
     
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=final_report)
     )
+    
 
 def show_user_profile(event):
     user_id = event.source.user_id
