@@ -751,41 +751,41 @@ def handle_profile_setup_flow(event, message_text):
                 event.reply_token,
                 TextSendMessage(text="請輸入有效的身高數字：")
             )
-    
-elif current_step == 'weight':
-    try:
-        weight = float(message_text)
-        user_states[user_id]['data']['weight'] = weight
-        user_states[user_id]['step'] = 'body_fat'
         
-        # 估算體脂率
-        data = user_states[user_id]['data']
-        height_m = data['height'] / 100
-        bmi = weight / (height_m ** 2)
-        
-        # 簡單的體脂率估算
-        if data['gender'] == '男性':
-            estimated_body_fat = (1.20 * bmi) + (0.23 * data['age']) - 16.2
-        else:
-            estimated_body_fat = (1.20 * bmi) + (0.23 * data['age']) - 5.4
-        
-        estimated_body_fat = max(5, min(50, estimated_body_fat))
-        
-        quick_reply = QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label=f"使用估算值 {estimated_body_fat:.1f}%", text=f"估算 {estimated_body_fat:.1f}")),
-            QuickReplyButton(action=MessageAction(label="輸入實測值", text="實測值")),
-            QuickReplyButton(action=MessageAction(label="跳過此項", text="跳過體脂"))
-        ])
-        
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=f"📊 體脂率設定\n\n根據你的BMI，估算體脂率約為 {estimated_body_fat:.1f}%\n\n請選擇：", quick_reply=quick_reply)
-        )
-    except ValueError:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="請輸入有效的體重數字：")
-        )
+    elif current_step == 'weight':
+        try:
+            weight = float(message_text)
+            user_states[user_id]['data']['weight'] = weight
+            user_states[user_id]['step'] = 'body_fat'
+            
+            # 估算體脂率
+            data = user_states[user_id]['data']
+            height_m = data['height'] / 100
+            bmi = weight / (height_m ** 2)
+            
+            # 簡單的體脂率估算
+            if data['gender'] == '男性':
+                estimated_body_fat = (1.20 * bmi) + (0.23 * data['age']) - 16.2
+            else:
+                estimated_body_fat = (1.20 * bmi) + (0.23 * data['age']) - 5.4
+            
+            estimated_body_fat = max(5, min(50, estimated_body_fat))
+            
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label=f"使用估算值 {estimated_body_fat:.1f}%", text=f"估算 {estimated_body_fat:.1f}")),
+                QuickReplyButton(action=MessageAction(label="輸入實測值", text="實測值")),
+                QuickReplyButton(action=MessageAction(label="跳過此項", text="跳過體脂"))
+            ])
+            
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"📊 體脂率設定\n\n根據你的BMI，估算體脂率約為 {estimated_body_fat:.1f}%\n\n請選擇：", quick_reply=quick_reply)
+            )
+        except ValueError:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="請輸入有效的體重數字：")
+            )
 
     elif current_step == 'body_fat':
         if "估算" in message_text:
