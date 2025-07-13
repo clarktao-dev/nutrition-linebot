@@ -364,6 +364,37 @@ def handle_text_message(event):
     user_id = event.source.user_id
     message_text = event.message.text
     
+    if message_text.lower().strip() in ['重新啟動', '重啟', 'restart', 'reset', '重置', '重新開始', '清除', '初始化', '卡住了', '不動了', '重來']:
+        # 清除用戶狀態
+        if user_id in user_states:
+            del user_states[user_id]
+        
+        # 重新初始化
+        user_states[user_id] = {'step': 'normal'}
+        
+        # 提供快速選單
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="設定個人資料", text="設定個人資料")),
+            QuickReplyButton(action=MessageAction(label="飲食建議", text="飲食建議")),
+            QuickReplyButton(action=MessageAction(label="使用說明", text="使用說明")),
+            QuickReplyButton(action=MessageAction(label="我的資料", text="我的資料"))
+        ])
+        
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(
+                text="""🔄 系統重新啟動成功！
+
+✅ 所有對話狀態已清除
+✅ 可以重新開始任何功能
+✅ 個人資料仍然保存
+
+🎯 現在你可以：""",
+                quick_reply=quick_reply
+            )
+        )
+        return
+
     # 檢查用戶狀態
     if user_id not in user_states:
         user_states[user_id] = {'step': 'normal'}
@@ -374,7 +405,7 @@ def handle_text_message(event):
         return
     
     # 主功能處理
-    if message_text in ["開始", "hi", "hello", "你好", "Hello"]:
+    if message_text in ["開始", "hi", "hello", "你好", "Hello", "Hi", "Hello"]:
         handle_welcome(event)
     elif message_text == "設定個人資料":
         start_profile_setup(event)
@@ -714,10 +745,41 @@ def handle_profile_setup_flow(event, message_text):
     
     elif current_step == 'age':
         try:
-            age = int(message_text)
-            user_states[user_id]['data']['age'] = age
-            user_states[user_id]['step'] = 'gender'
-            
+            age = int(re.findall(r'\d+', message_text)[0])  # 提取數字
+            if 10 <= age <= 120:  # 合理年齡範圍
+                user_states[user_id]['data']['age'] = age
+                user_states[user_id]['step'] = 'gender'
+                
+                quick_reply = QuickReply(items=[
+                    QuickReplyButton(action=MessageAction(label="男性", text="男性")),
+                    QuickReplyButton(action=MessageAction(label="女性", text="女性"))
+                ])
+                
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="請選擇你的性別：", quick_reply=quick_reply)
+                )
+            else:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="年齡請輸入10-120之間的數字：")
+                )
+        except (ValueError, IndexError):
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="請輸入有效的年齡數字（例如：25）：")
+            )
+    
+    elif current_step == 'gender':
+        # 智能識別性別輸入
+        message_lower = message_text.lower().strip()
+        
+        if message_lower in ['男性', '男', 'male', 'm', '1', '先生']:
+            gender = '男性'
+        elif message_lower in ['女性', '女', 'female', 'f', '2', '小姐']:
+            gender = '女性'
+        else:
+            # 無法識別時，重新詢問
             quick_reply = QuickReply(items=[
                 QuickReplyButton(action=MessageAction(label="男性", text="男性")),
                 QuickReplyButton(action=MessageAction(label="女性", text="女性"))
@@ -725,22 +787,17 @@ def handle_profile_setup_flow(event, message_text):
             
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="請選擇你的性別：", quick_reply=quick_reply)
+                TextSendMessage(text="請選擇你的性別（請點選下方按鈕或輸入「男性」、「女性」）：", quick_reply=quick_reply)
             )
-        except ValueError:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text="請輸入有效的年齡數字：")
-            )
-    
-    elif current_step == 'gender':
-        user_states[user_id]['data']['gender'] = message_text
+            return
+        
+        user_states[user_id]['data']['gender'] = gender
         user_states[user_id]['step'] = 'height'
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="請告訴我你的身高（公分）：")
-        )
-    
+        )        
+
     elif current_step == 'height':
         try:
             height = float(message_text)
@@ -867,7 +924,30 @@ def handle_profile_setup_flow(event, message_text):
             )
     
     elif current_step == 'activity':
-        user_states[user_id]['data']['activity_level'] = message_text
+        # 智能識別活動量輸入
+        message_lower = message_text.lower().strip()
+        
+        if message_lower in ['低活動量', '低', 'low', '1', '很少運動', '久坐']:
+            activity = '低活動量'
+        elif message_lower in ['中等活動量', '中等', '中', 'medium', '2', '適度運動']:
+            activity = '中等活動量'
+        elif message_lower in ['高活動量', '高', 'high', '3', '經常運動', '很多運動']:
+            activity = '高活動量'
+        else:
+            # 無法識別時，重新詢問
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="低活動量", text="低活動量")),
+                QuickReplyButton(action=MessageAction(label="中等活動量", text="中等活動量")),
+                QuickReplyButton(action=MessageAction(label="高活動量", text="高活動量"))
+            ])
+            
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="請選擇你的活動量：\n\n低活動量(1)：很少運動\n中等活動量(2)：每週運動2-3次\n高活動量(3)：每天都運動\n\n請點選按鈕或輸入數字1-3：", quick_reply=quick_reply)
+            )
+            return
+        
+        user_states[user_id]['data']['activity_level'] = activity
         user_states[user_id]['step'] = 'health_goals'
         line_bot_api.reply_message(
             event.reply_token,
