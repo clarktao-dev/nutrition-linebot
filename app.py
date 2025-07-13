@@ -1089,7 +1089,8 @@ def handle_image_message(event):
 我會根據你的個人資料提供最適合的建議！"""
     
     quick_reply = QuickReply(items=[
-        QuickReplyButton(action=MessageAction(label="飲食建議", text="推薦健康餐點")),
+        QuickReplyButton(action=MessageAction(label="今日進度", text="今日進度")),
+        QuickReplyButton(action=MessageAction(label="飲食建議", text="今天晚餐吃什麼？")),
         QuickReplyButton(action=MessageAction(label="食物諮詢", text="這個食物適合我嗎？"))
     ])
     
@@ -1098,7 +1099,759 @@ def handle_image_message(event):
         TextSendMessage(text=guide_text, quick_reply=quick_reply)
     )
 
+def provide_meal_suggestions(event, user_message=""):
+    """提供飲食建議"""
+    user_id = event.source.user_id
+    user = UserManager.get_user(user_id)
+    
+    if not user:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="請先設定個人資料，我才能提供適合你的飲食建議喔！")
+        )
+        return
+    
+    try:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="🤔 讓我想想適合你的餐點...")
+        )
+        
+        # 取得用戶最近飲食和偏好
+        recent_meals = UserManager.get_recent_meals(user_id)
+        food_preferences = UserManager.get_food_preferences(user_id)
+        
+        # 準備上下文資訊
+        diabetes_context = f"糖尿病類型：{user[12]}" if user[12] else "無糖尿病"
+        
+        user_context = f"""
+用戶資料：{user[1]}，{user[2]}歲，{user[3]}
+身高：{user[4]}cm，體重：{user[5]}kg，體脂率：{user[6] or 0:.1f}%
+活動量：{user[9]}
+健康目標：{user[10]}
+飲食限制：{user[11]}
+{diabetes_context}
+
+每日營養目標：
+熱量：{user[13]:.0f}大卡，碳水：{user[14]:.0f}g，蛋白質：{user[15]:.0f}g，脂肪：{user[16]:.0f}g
+
+最近3天飲食：
+{chr(10).join([f"- {meal[0]}" for meal in recent_meals[:5]])}
+
+常吃食物：
+{chr(10).join([f"- {pref[0]} (吃過{pref[1]}次)" for pref in food_preferences[:5]])}
+
+用戶詢問：{user_message}
+"""
+        
+        # 修改後的建議 Prompt
+        suggestion_prompt = """
+你是擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶的個人資料、飲食習慣和詢問，提供個人化的餐點建議。
+
+**重要要求：每個食物都必須提供明確的份量指示**
+
+請使用以下份量表達方式：
+🍚 **主食類**：
+- 白飯/糙米飯：1碗 = 1個拳頭大 = 約150-200g = 約200-250大卡
+- 麵條：1份 = 約100g乾重 = 煮熟後約200g
+- 吐司：1片全麥吐司 = 約30g = 約80大卡
+
+🥩 **蛋白質類**：
+- 雞胸肉：1份 = 1個手掌大小厚度 = 約100-120g = 約120-150大卡
+- 魚類：1份 = 手掌大小 = 約100g = 約100-150大卡
+- 蛋：1顆雞蛋 = 約50g = 約70大卡
+- 豆腐：1塊 = 手掌大小 = 約100g = 約80大卡
+
+🥬 **蔬菜類**：
+- 綠葉蔬菜：1份 = 煮熟後約100g = 生菜約200g = 約25大卡
+- 根莖類：1份 = 約100g = 約50-80大卡
+
+🥛 **其他**：
+- 堅果：1份 = 約30g = 約1湯匙 = 約180大卡
+- 油：1茶匙 = 約5ml = 約45大卡
+
+**糖尿病患者特別注意**：
+- 優先推薦低GI食物
+- 碳水化合物份量要精確控制
+- 建議少量多餐
+- 避免精製糖和高糖食物
+
+請提供：
+1. 推薦3-5個適合的完整餐點組合
+2. 每個餐點包含：主食+蛋白質+蔬菜+適量油脂
+3. **每個食物項目都要標明：具體份量（克數）+ 視覺比對（拳頭/手掌等）+ 約略熱量**
+4. 總熱量估算和營養素分配
+5. 考慮用戶的健康目標和飲食限制
+6. 避免重複最近吃過的食物
+7. 提供簡單的製作方式或購買建議
+8. 說明選擇這些餐點的營養理由
+
+請提供實用、具體的建議，讓用戶可以精確執行。
+"""
+        
+        # 使用 OpenAI 生成建議
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": suggestion_prompt},
+                    {"role": "user", "content": user_context}
+                ],
+                max_tokens=1200,
+                temperature=0.8
+            )
+            
+            suggestions = response.choices[0].message.content
+            
+        except Exception as openai_error:
+            suggestions = generate_detailed_meal_suggestions(user, recent_meals, food_preferences)
+        
+        line_bot_api.push_message(
+            event.source.user_id,
+            TextSendMessage(text=f"🍽️ 為你推薦的餐點：\n\n{suggestions}")
+        )
+        
+    except Exception as e:
+        error_message = f"抱歉，推薦功能出現問題：{str(e)}\n\n請稍後再試或直接詢問特定餐點建議。"
+        
+        line_bot_api.push_message(
+            event.source.user_id,
+            TextSendMessage(text=error_message)
+        )
+
+def provide_food_consultation(event, user_question):
+    """提供食物諮詢"""
+    user_id = event.source.user_id
+    user = UserManager.get_user(user_id)
+    
+    try:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="🤔 讓我分析一下這個問題...")
+        )
+        
+        # 準備用戶背景資訊
+        if user:
+            diabetes_context = f"糖尿病類型：{user[12]}" if user[12] else "無糖尿病"
+            user_context = f"""
+用戶資料：{user[1]}，{user[2]}歲，{user[3]}
+身高：{user[4]}cm，體重：{user[5]}kg，體脂率：{user[6] or 0:.1f}%
+活動量：{user[9]}
+健康目標：{user[10]}
+飲食限制：{user[11]}
+{diabetes_context}
+"""
+        else:
+            user_context = "用戶未設定個人資料，請提供一般性建議。"
+        
+        # 修改後的諮詢 Prompt
+        consultation_prompt = f"""
+你是擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請回答用戶關於食物的問題：
+
+{user_context}
+
+**重要要求：如果涉及份量建議，必須提供明確的份量指示**
+
+請使用以下份量參考：
+🍚 **主食**: 1碗飯 = 1拳頭 = 150-200g
+🥩 **蛋白質**: 1份肉類 = 1手掌大小厚度 = 100-120g  
+🥬 **蔬菜**: 1份 = 煮熟後100g = 生菜200g
+🥜 **堅果**: 1份 = 30g = 約1湯匙
+🥛 **飲品**: 1杯 = 250ml
+
+**糖尿病患者特別考量**：
+- 重點關注血糖影響
+- 提供GI值參考
+- 建議適合的食用時間
+- 給出血糖監測建議
+
+請提供：
+1. 直接回答用戶的問題（可以吃/不建議/適量等）
+2. 說明原因（營養成分、健康影響）  
+3. **如果可以吃，明確建議份量**：
+   - 具體重量（克數）
+   - 視覺比對（拳頭/手掌/湯匙等）
+   - 建議頻率（每天/每週幾次）
+   - 最佳食用時間
+4. 如果不建議，提供份量明確的替代選項
+5. 針對用戶健康狀況的特別提醒
+
+請用專業但易懂的語言回應，讓用戶能精確執行建議。
+"""
+        
+        # 使用 OpenAI 分析
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": consultation_prompt},
+                    {"role": "user", "content": f"用戶問題：{user_question}"}
+                ],
+                max_tokens=800,
+                temperature=0.7
+            )
+            
+            consultation_result = response.choices[0].message.content
+            
+        except Exception as openai_error:
+            consultation_result = generate_detailed_food_consultation(user_question, user)
+        
+        line_bot_api.push_message(
+            event.source.user_id,
+            TextSendMessage(text=f"💡 營養師建議：\n\n{consultation_result}")
+        )
+        
+    except Exception as e:
+        error_message = f"抱歉，諮詢功能出現問題：{str(e)}\n\n請重新描述你的問題，我會盡力回答。"
+        
+        line_bot_api.push_message(
+            event.source.user_id,
+            TextSendMessage(text=error_message)
+        )
+
+def analyze_food_description(event, food_description):
+    user_id = event.source.user_id
+    user = UserManager.get_user(user_id)
+    
+    try:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="🔍 正在分析你的飲食內容，請稍候...")
+        )
+        
+        # 判斷餐型
+        meal_type = determine_meal_type(food_description)
+        
+        # 建立個人化提示
+        if user:
+            diabetes_context = f"糖尿病類型：{user[12]}" if user[12] else "無糖尿病"
+            user_context = f"""
+用戶資料：
+- 姓名：{user[1]}，{user[2]}歲，{user[3]}
+- 身高：{user[4]}cm，體重：{user[5]}kg，體脂率：{user[6] or 0:.1f}%
+- 活動量：{user[9]}
+- 健康目標：{user[10]}
+- 飲食限制：{user[11]}
+- {diabetes_context}
+
+每日營養目標：
+熱量：{user[13]:.0f}大卡，碳水：{user[14]:.0f}g，蛋白質：{user[15]:.0f}g，脂肪：{user[16]:.0f}g
+"""
+        else:
+            user_context = "用戶未設定個人資料，請提供一般性建議。"
+        
+        # 修改後的營養分析 Prompt
+        nutrition_prompt = f"""
+你是一位擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶的個人資料和食物描述，提供個人化的營養分析：
+
+{user_context}
+
+**重要要求：在建議中必須提供明確的份量指示和營養數據**
+
+份量參考標準：
+🍚 **主食**: 1碗 = 1拳頭大 = 150-200g = 200-250大卡
+🥩 **蛋白質**: 1份 = 1手掌大厚度 = 100-120g = 120-200大卡
+🥬 **蔬菜**: 1份 = 煮熟100g = 生菜200g = 25-50大卡
+🥜 **堅果**: 1份 = 30g = 1湯匙 = 180大卡
+🍎 **水果**: 1份 = 1個拳頭大 = 150g = 60-100大卡
+
+**糖尿病患者特別分析**：
+- 重點分析血糖影響
+- 計算醣類含量
+- 評估GI值影響
+- 建議血糖監測時機
+
+請提供：
+1. **營養成分詳細分析**：
+   - 估算熱量、碳水化合物、蛋白質、脂肪、纖維
+   - 各食物分別的營養貢獻
+   - 醣類含量和GI值評估（糖尿病患者重要）
+
+2. **個人化評估**：
+   - 基於用戶健康目標的評價
+   - 與每日營養目標的對比
+   - 對血糖的可能影響（如有糖尿病）
+
+3. **下餐具體搭配建議**：
+   - 明確食物項目和份量（克數 + 視覺比對）
+   - 建議總熱量和營養素分配
+   - 營養平衡說明
+
+4. **長期改善建議**：
+   - 如何調整份量達到健康目標
+   - 具體的替換建議（含份量）
+   - 糖尿病血糖控制建議（如適用）
+
+5. **今日營養進度更新**：
+   - 累計營養素攝取
+   - 剩餘目標計算
+
+回應請用繁體中文，語調親切專業，讓用戶能精確執行建議。
+"""
+        
+        # 使用 OpenAI 分析
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": nutrition_prompt},
+                    {"role": "user", "content": f"請分析以下{meal_type}：{food_description}"}
+                ],
+                max_tokens=1000,
+                temperature=0.7
+            )
+            
+            analysis_result = response.choices[0].message.content
+            
+            # 嘗試從分析中提取營養數據（簡化版）
+            nutrition_data = extract_nutrition_from_analysis(analysis_result)
+            
+            # 儲存飲食記錄
+            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result, nutrition_data)
+            
+        except Exception as openai_error:
+            analysis_result = f"OpenAI 分析暫時無法使用：{str(openai_error)}\n\n請確保 API 額度充足，或稍後再試。"
+            # 基本營養數據
+            nutrition_data = {'calories': 300, 'carbs': 45, 'protein': 15, 'fat': 10, 'fiber': 5, 'sugar': 8}
+            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result, nutrition_data)
+        
+        # 顯示今日進度
+        daily_progress_text = get_daily_progress_summary(user_id)
+        
+        full_response = f"🍽️ {meal_type}營養分析：\n\n{analysis_result}\n\n{daily_progress_text}"
+        
+        line_bot_api.push_message(
+            event.source.user_id,
+            TextSendMessage(text=full_response)
+        )
+        
+    except Exception as e:
+        error_message = f"抱歉，分析出現問題：{str(e)}\n\n請重新描述你的飲食內容。"
+        
+        line_bot_api.push_message(
+            event.source.user_id,
+            TextSendMessage(text=error_message)
+        )
+
+def extract_nutrition_from_analysis(analysis_text):
+    """從分析文本中提取營養數據（簡化版）"""
+    import re
+    
+    # 簡單的正則表達式提取數字
+    calories_match = re.search(r'(\d+)\s*大卡', analysis_text)
+    carbs_match = re.search(r'碳水[^0-9]*(\d+(?:\.\d+)?)\s*g', analysis_text)
+    protein_match = re.search(r'蛋白質[^0-9]*(\d+(?:\.\d+)?)\s*g', analysis_text)
+    fat_match = re.search(r'脂肪[^0-9]*(\d+(?:\.\d+)?)\s*g', analysis_text)
+    
+    return {
+        'calories': float(calories_match.group(1)) if calories_match else 300,
+        'carbs': float(carbs_match.group(1)) if carbs_match else 45,
+        'protein': float(protein_match.group(1)) if protein_match else 15,
+        'fat': float(fat_match.group(1)) if fat_match else 10,
+        'fiber': 5,  # 預設值
+        'sugar': 8   # 預設值
+    }
+
+def get_daily_progress_summary(user_id):
+    """取得每日進度簡要"""
+    user = UserManager.get_user(user_id)
+    daily_nutrition = UserManager.get_daily_nutrition(user_id)
+    
+    if not user or not daily_nutrition:
+        return ""
+    
+    current_calories = daily_nutrition[3] or 0
+    target_calories = user[13] or 0
+    
+    remaining_calories = max(0, target_calories - current_calories)
+    progress_percent = (current_calories / target_calories * 100) if target_calories > 0 else 0
+    
+    return f"""
+📊 **今日進度更新**：
+目前攝取：{current_calories:.0f} / {target_calories:.0f} 大卡 ({progress_percent:.0f}%)
+還需要：{remaining_calories:.0f} 大卡
+
+可以說「今日進度」查看詳細營養追蹤！"""
+
+def generate_weekly_report(event):
+    user_id = event.source.user_id
+    user = UserManager.get_user(user_id)
+    
+    if not user:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="請先設定個人資料才能產生週報告。")
+        )
+        return
+    
+    # 取得本週飲食記錄
+    weekly_meals = UserManager.get_weekly_meals(user_id)
+    
+    if not weekly_meals:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="本週還沒有飲食記錄。開始記錄你的飲食，下週就能看到詳細報告了！")
+        )
+        return
+    
+    # 生成週報告
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        # 準備本週飲食資料
+        meals_by_type = {}
+        for meal in weekly_meals:
+            meal_type = meal[0]
+            if meal_type not in meals_by_type:
+                meals_by_type[meal_type] = []
+            meals_by_type[meal_type].append(meal[1])
+        
+        meals_summary = ""
+        for meal_type, meals in meals_by_type.items():
+            meals_summary += f"\n{meal_type}：\n"
+            for meal in meals[:3]:  # 只顯示前3個
+                meals_summary += f"- {meal}\n"
+        
+        diabetes_context = f"糖尿病類型：{user[12]}" if user[12] else "無糖尿病"
+        user_context = f"""
+用戶資料：{user[1]}，{user[2]}歲，{user[3]}
+身高：{user[4]}cm，體重：{user[5]}kg，體脂率：{user[6] or 0:.1f}%
+活動量：{user[9]}
+健康目標：{user[10]}
+飲食限制：{user[11]}
+{diabetes_context}
+
+本週飲食記錄（共{len(weekly_meals)}餐）：
+{meals_summary}
+"""
+        
+        report_prompt = """
+作為專業營養師，請為用戶生成本週營養分析報告：
+
+1. 本週飲食總結與亮點
+2. 營養攝取評估（優點與不足）
+3. 與健康目標的對比分析
+4. 具體改善建議（3-5點，包含明確份量）
+5. 下週飲食規劃建議
+6. 糖尿病血糖控制評估（如適用）
+
+請提供具體、實用的建議，語調要專業而親切。
+"""
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": report_prompt},
+                {"role": "user", "content": user_context}
+            ],
+            max_tokens=1000,
+            temperature=0.7
+        )
+        
+        report = response.choices[0].message.content
+        
+        final_report = f"""📊 本週營養分析報告
+記錄天數：{len(set(meal[3][:10] for meal in weekly_meals))} 天
+總餐數：{len(weekly_meals)} 餐
+
+{report}
+
+💡 持續記錄飲食，讓我為你提供更準確的營養建議！"""
+        
+    except Exception as e:
+        final_report = f"""📊 本週營養記錄摘要
+記錄天數：{len(set(meal[3][:10] for meal in weekly_meals))} 天
+總餐數：{len(weekly_meals)} 餐
+
+🎯 **飲食記錄統計**：
+"""
+        
+        # 統計餐型分佈
+        meal_counts = {}
+        for meal in weekly_meals:
+            meal_type = meal[0]
+            meal_counts[meal_type] = meal_counts.get(meal_type, 0) + 1
+        
+        for meal_type, count in meal_counts.items():
+            final_report += f"• {meal_type}：{count} 次\n"
+        
+        final_report += f"""
+💡 **一般建議**：
+• 保持規律的三餐時間
+• 增加蔬果攝取
+• 注意營養均衡
+• 適量補充水分
+• 糖尿病患者注意血糖監測
+
+詳細分析功能暫時無法使用，請稍後再試。"""
+    
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=final_report)
+    )
+
+def show_user_profile(event):
+    user_id = event.source.user_id
+    user = UserManager.get_user(user_id)
+    
+    if not user:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="你還沒有設定個人資料。請先點選「設定個人資料」。")
+        )
+        return
+    
+    bmi = user[5] / ((user[4] / 100) ** 2)
+    body_fat = user[6] or 0
+    
+    profile_text = f"""👤 你的個人資料：
+
+• 姓名：{user[1]}
+• 年齡：{user[2]} 歲  
+• 性別：{user[3]}
+• 身高：{user[4]} cm
+• 體重：{user[5]} kg
+• 體脂率：{body_fat:.1f}%
+• BMI：{bmi:.1f}
+• 活動量：{user[9]}
+• 健康目標：{user[10]}
+• 飲食限制：{user[11]}"""
+    
+    if user[12]:
+        profile_text += f"\n• 糖尿病類型：{user[12]}"
+    
+    profile_text += f"""
+
+🎯 每日營養目標：
+• 熱量：{user[13]:.0f} 大卡
+• 碳水：{user[14]:.0f} g
+• 蛋白質：{user[15]:.0f} g
+• 脂肪：{user[16]:.0f} g
+
+💡 想要更新資料，請點選「更新個人資料」。"""
+    
+    quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="更新個人資料", text="更新個人資料")),
+        QuickReplyButton(action=MessageAction(label="今日進度", text="今日進度"))
+    ])
+    
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=profile_text, quick_reply=quick_reply)
+    )
+
+def show_instructions(event):
+    instructions = """📋 使用說明
+
+🏥 **我是20年經驗營養師，特別專精糖尿病醣類控制**
+
+🔹 **主要功能**：
+📝 **記錄飲食**：「早餐吃了蛋餅加豆漿」
+🍽️ **飲食建議**：「今天晚餐吃什麼？」
+❓ **食物諮詢**：「糖尿病可以吃水果嗎？」
+📊 **營養追蹤**：即時顯示今日進度
+📈 **週報告**：追蹤營養趨勢
+
+🔹 **智慧對話範例**：
+• 「不知道要吃什麼」→ 推薦適合餐點
+• 「香蕉適合我嗎？」→ 個人化食物建議
+• 「這個份量OK嗎？」→ 份量調整建議
+• 「血糖高能吃什麼？」→ 糖尿病專業建議
+
+🔹 **體脂率精準計算**：
+✓ 智能估算或實測輸入
+✓ Katch-McArdle 公式計算代謝
+✓ 個人化營養目標制定
+
+🔹 **糖尿病專業功能**：
+🩺 醣類攝取精確控制
+📉 血糖影響評估
+🍽️ 低GI食物推薦
+⏰ 用餐時機建議
+
+🔹 **個人化功能**：
+✓ 記住你的身體資料和體脂率
+✓ 根據健康目標精準建議
+✓ 避免你的飲食禁忌
+✓ 學習你的飲食偏好
+✓ 主動關心提醒
+
+💡 **小技巧**：
+越詳細的描述，越準確的建議！"""
+    
+    quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="今日進度", text="今日進度")),
+        QuickReplyButton(action=MessageAction(label="飲食建議", text="今天要吃什麼？")),
+        QuickReplyButton(action=MessageAction(label="食物諮詢", text="糖尿病可以吃燕麥嗎？")),
+        QuickReplyButton(action=MessageAction(label="記錄飲食", text="午餐吃了雞腿便當"))
+    ])
+    
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=instructions, quick_reply=quick_reply)
+    )
+
+@handler.add(MessageEvent, message=ImageMessage)
+def handle_image_message(event):
+    guide_text = """📸 感謝你上傳照片！
+
+為了提供更準確的分析，請用文字描述你的食物：
+
+💬 **描述範例**：
+• 「白飯一碗 + 紅燒豬肉 + 青菜」
+• 「雞腿便當，有滷蛋和高麗菜」
+• 「拿鐵咖啡中杯 + 全麥吐司」
+
+🩺 **糖尿病患者特別注意**：
+• 「糙米飯半碗 + 蒸魚一片」
+• 「燕麥粥一碗，無糖」
+
+🤖 **或者你可以問我**：
+• 「這個便當適合糖尿病患者嗎？」
+• 「推薦低GI的午餐」
+• 「血糖高可以吃什麼？」
+
+我會根據你的個人資料和體脂率提供最適合的建議！"""
+    
+    quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="飲食建議", text="推薦健康餐點")),
+        QuickReplyButton(action=MessageAction(label="糖尿病諮詢", text="血糖高可以吃什麼？")),
+        QuickReplyButton(action=MessageAction(label="今日進度", text="今日進度"))
+    ])
+    
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=guide_text, quick_reply=quick_reply)
+    )
+
+def determine_meal_type(description):
+    """判斷餐型"""
+    description_lower = description.lower()
+    
+    if any(word in description_lower for word in ['早餐', '早上', '早飯', 'morning', '晨間']):
+        return '早餐'
+    elif any(word in description_lower for word in ['午餐', '中午', '午飯', 'lunch', '中餐']):
+        return '午餐'
+    elif any(word in description_lower for word in ['晚餐', '晚上', '晚飯', 'dinner', '晚食']):
+        return '晚餐'
+    elif any(word in description_lower for word in ['點心', '零食', '下午茶', 'snack', '宵夜']):
+        return '點心'
+    else:
+        return '餐點'
+
+def generate_detailed_meal_suggestions(user, recent_meals, food_preferences):
+    """API 不可用時的詳細餐點建議"""
+    
+    health_goal = user[10] if user[10] else "維持健康"
+    restrictions = user[11] if user[11] else "無"
+    diabetes_type = user[12] if user[12] else None
+    
+    suggestions = f"""根據你的健康目標「{health_goal}」，推薦以下餐點：
+
+🥗 **均衡餐點建議**（含精確份量）：
+
+**選項1：蒸魚餐**
+• 糙米飯：1碗 = 1拳頭大 = 約180g = 約220大卡
+• 蒸鮭魚：1片 = 手掌大厚度 = 約120g = 約180大卡  
+• 炒青菜：1份 = 煮熟後100g = 約30大卡
+• 橄欖油：1茶匙 = 5ml = 約45大卡
+**總熱量：約475大卡**
+
+**選項2：雞胸肉沙拉**
+• 雞胸肉：1份 = 手掌大 = 約100g = 約165大卡
+• 生菜沙拉：2碗 = 約200g = 約30大卡
+• 全麥麵包：1片 = 約30g = 約80大卡
+• 堅果：1湯匙 = 約15g = 約90大卡
+**總熱量：約365大卡**"""
+    
+    if diabetes_type:
+        suggestions += f"""
+
+🩺 **糖尿病專用餐點**：
+
+**選項3：低GI控糖餐**
+• 燕麥：1/2碗 = 約50g乾重 = 約180大卡
+• 水煮蛋：2顆 = 約100g = 約140大卡
+• 花椰菜：1份 = 約150g = 約40大卡
+• 酪梨：1/4顆 = 約50g = 約80大卡
+**總熱量：約440大卡，低GI值**"""
+    
+    suggestions += f"""
+
+💡 **份量調整原則**：
+• 減重：減少主食至半碗（90g）
+• 增重：增加蛋白質至1.5份（150g）
+• 控糖：選擇低GI主食，控制在100g以內
+
+⚠️ **飲食限制考量**：{restrictions}
+
+詳細營養分析功能暫時無法使用，以上為精確份量建議。"""
+    
+    return suggestions
+
+def generate_detailed_food_consultation(question, user):
+    """API 不可用時的詳細食物諮詢"""
+    
+    diabetes_note = ""
+    if user and user[12]:
+        diabetes_note = f"\n🩺 **糖尿病患者特別注意**：由於你有{user[12]}，建議特別注意血糖監測。"
+    
+    consultation = f"""關於你的問題「{question}」：
+
+💡 **一般建議與份量指示**：
+
+🔸 **基本原則**：
+• 任何食物都要適量攝取
+• 注意個人健康狀況
+• 均衡飲食最重要
+• 糖尿病患者特別注意醣類控制
+
+🔸 **常見食物份量參考**：
+• 水果：1份 = 1個拳頭大 = 約150g
+• 堅果：1份 = 1湯匙 = 約30g  
+• 全穀物：1份 = 1拳頭 = 約150-200g
+• 蛋白質：1份 = 1手掌厚度 = 約100-120g
+
+🔸 **糖尿病友特別份量建議**：
+• 水果：每次不超過1份，餐後2小時食用
+• 主食：每餐不超過1碗（150g）
+• 選擇低GI食物優先
+
+⚠️ **特別提醒**：
+• 如有特殊疾病，請諮詢醫師
+• 注意個人過敏原
+• 逐漸調整份量，避免突然改變{diabetes_note}
+
+📋 **建議做法**：
+• 使用食物秤確認重量
+• 學會視覺估量
+• 記錄飲食反應
+• 定期監測血糖（糖尿病患者）
+
+詳細營養諮詢功能暫時無法使用，建議諮詢專業營養師獲得個人化建議。"""
+    
+    return consultation
+
+# 啟動排程器
+start_scheduler()
+
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
-    print(f"啟動完整營養師助手在端口 {port}")
+    print(f"啟動20年經驗糖尿病專業營養師機器人在端口 {port}")
+    print("主要功能：")
+    print("- 體脂率精準計算與營養目標制定")
+    print("- 糖尿病醣類控制專業建議")
+    print("- 每日營養追蹤與進度顯示")
+    print("- 主動提醒與月度更新提醒")
+    print("- 每日使用報告Email發送")
     app.run(host='0.0.0.0', port=port, debug=True)
