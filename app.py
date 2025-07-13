@@ -220,18 +220,37 @@ class UserManager:
         conn.close()
     
     @staticmethod
-    def save_meal_record(user_id, meal_type, meal_description, analysis):
+    def save_meal_record(user_id, meal_type, meal_description, analysis, nutrition_data=None):
         conn = sqlite3.connect('nutrition_bot.db')
         cursor = conn.cursor()
+        
+        # 如果沒有提供營養數據，嘗試從分析中提取
+        if nutrition_data is None:
+            nutrition_data = extract_nutrition_from_analysis(analysis)
+        
         cursor.execute('''
-            INSERT INTO meal_records (user_id, meal_type, meal_description, nutrition_analysis)
-            VALUES (?, ?, ?, ?)
-        ''', (user_id, meal_type, meal_description, analysis))
-        conn.commit()
+            INSERT INTO meal_records 
+            (user_id, meal_type, meal_description, nutrition_analysis,
+            calories, carbs, protein, fat, fiber, sugar)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            user_id, meal_type, meal_description, analysis,
+            nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
+            nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
+            nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0)
+        ))
+        
+        # 更新每日營養總結
+        UserManager.update_daily_nutrition(user_id, nutrition_data)
         
         # 更新食物偏好
         UserManager.update_food_preferences(user_id, meal_description)
+        
+        conn.commit()
         conn.close()
+        
+        # 添加確認訊息
+        print(f"已儲存飲食記錄：{meal_type} - {meal_description}")
     
     @staticmethod
     def update_food_preferences(user_id, meal_description):
@@ -518,41 +537,61 @@ def provide_meal_suggestions(event, user_message=""):
 
         # 修改後的建議 Prompt
         suggestion_prompt = """
-作為專業營養師，請根據用戶的個人資料、飲食習慣和詢問，提供個人化的餐點建議。
+你是擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶的個人資料、飲食習慣和詢問，提供個人化的餐點建議。
 
-**重要要求：每個食物都必須提供明確的份量指示**
+重要要求：
+1. 每個食物都必須提供明確的份量指示
+2. 使用純文字格式，不要使用任何 Markdown 符號（如 #、*、**、- 等）
+3. 使用表情符號和空行來區分段落
 
-請使用以下份量表達方式：
-🍚 **主食類**：
-- 白飯/糙米飯：1碗 = 1個拳頭大 = 約150-200g = 約200-250大卡
-- 麵條：1份 = 約100g乾重 = 煮熟後約200g
-- 吐司：1片全麥吐司 = 約30g = 約80大卡
+份量表達方式：
+🍚 主食類：
+白飯/糙米飯：1碗 = 1個拳頭大 = 約150-200g = 約200-250大卡
+麵條：1份 = 約100g乾重 = 煮熟後約200g
+吐司：1片全麥吐司 = 約30g = 約80大卡
 
-🥩 **蛋白質類**：
-- 雞胸肉：1份 = 1個手掌大小厚度 = 約100-120g = 約120-150大卡
-- 魚類：1份 = 手掌大小 = 約100g = 約100-150大卡
-- 蛋：1顆雞蛋 = 約50g = 約70大卡
-- 豆腐：1塊 = 手掌大小 = 約100g = 約80大卡
+🥩 蛋白質類：
+雞胸肉：1份 = 1個手掌大小厚度 = 約100-120g = 約120-150大卡
+魚類：1份 = 手掌大小 = 約100g = 約100-150大卡
+蛋：1顆雞蛋 = 約50g = 約70大卡
+豆腐：1塊 = 手掌大小 = 約100g = 約80大卡
 
-🥬 **蔬菜類**：
-- 綠葉蔬菜：1份 = 煮熟後約100g = 生菜約200g = 約25大卡
-- 根莖類：1份 = 約100g = 約50-80大卡
+🥬 蔬菜類：
+綠葉蔬菜：1份 = 煮熟後約100g = 生菜約200g = 約25大卡
+根莖類：1份 = 約100g = 約50-80大卡
 
-🥛 **其他**：
-- 堅果：1份 = 約30g = 約1湯匙 = 約180大卡
-- 油：1茶匙 = 約5ml = 約45大卡
+🥛 其他：
+堅果：1份 = 約30g = 約1湯匙 = 約180大卡
+油：1茶匙 = 約5ml = 約45大卡
+
+糖尿病患者特別注意：
+優先推薦低GI食物、碳水化合物份量要精確控制、建議少量多餐、避免精製糖和高糖食物
 
 請提供：
-1. 推薦3-5個適合的完整餐點組合
+1. 推薦3個適合的完整餐點組合
 2. 每個餐點包含：主食+蛋白質+蔬菜+適量油脂
-3. **每個食物項目都要標明：具體份量（克數）+ 視覺比對（拳頭/手掌等）+ 約略熱量**
-4. 總熱量估算
+3. 每個食物項目都要標明：具體份量（克數）+ 視覺比對（拳頭/手掌等）+ 約略熱量
+4. 總熱量估算和營養素分配
 5. 考慮用戶的健康目標和飲食限制
 6. 避免重複最近吃過的食物
 7. 提供簡單的製作方式或購買建議
 8. 說明選擇這些餐點的營養理由
 
-請提供實用、具體的建議，讓用戶可以精確執行。
+回應格式範例：
+🍽️ 餐點1：烤雞胸肉餐
+
+🍚 主食：糙米飯 1碗（150g）= 1拳頭大 = 約220大卡
+🥩 蛋白質：烤雞胸肉 1份（120g）= 手掌大厚度 = 約150大卡  
+🥬 蔬菜：炒青菜 1份（100g）= 約30大卡
+🥄 油脂：橄欖油 1茶匙（5ml）= 約45大卡
+
+總熱量：約445大卡
+
+🍳 製作方式：雞胸肉用香料調味烤15分鐘，青菜熱炒3分鐘即可
+
+💡 選擇理由：低脂高蛋白，適合減重目標
+
+請用純文字格式回應，不要使用 # * ** - 等符號，多用表情符號和空行讓內容清晰易讀。
 """
         
         # 使用 OpenAI 生成建議
@@ -614,31 +653,48 @@ def provide_food_consultation(event, user_question):
         
         # 修改後的諮詢 Prompt
         consultation_prompt = f"""
-作為專業營養師，請回答用戶關於食物的問題：
+你是擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請回答用戶關於食物的問題。
 
 {user_context}
 
-**重要要求：如果涉及份量建議，必須提供明確的份量指示**
+重要要求：
+1. 如果涉及份量建議，必須提供明確的份量指示
+2. 使用純文字格式，不要使用任何 Markdown 符號
+3. 使用表情符號區分段落
 
-請使用以下份量參考：
-🍚 **主食**: 1碗飯 = 1拳頭 = 150-200g
-🥩 **蛋白質**: 1份肉類 = 1手掌大小厚度 = 100-120g  
-🥬 **蔬菜**: 1份 = 煮熟後100g = 生菜200g
-🥜 **堅果**: 1份 = 30g = 約1湯匙
-🥛 **飲品**: 1杯 = 250ml
+份量參考：
+🍚 主食: 1碗飯 = 1拳頭 = 150-200g
+🥩 蛋白質: 1份肉類 = 1手掌大小厚度 = 100-120g  
+🥬 蔬菜: 1份 = 煮熟後100g = 生菜200g
+🥜 堅果: 1份 = 30g = 約1湯匙
+🥛 飲品: 1杯 = 250ml
+
+糖尿病患者特別考量：
+重點關注血糖影響、提供GI值參考、建議適合的食用時間、給出血糖監測建議
 
 請提供：
 1. 直接回答用戶的問題（可以吃/不建議/適量等）
 2. 說明原因（營養成分、健康影響）  
-3. **如果可以吃，明確建議份量**：
-   - 具體重量（克數）
-   - 視覺比對（拳頭/手掌/湯匙等）
-   - 建議頻率（每天/每週幾次）
-   - 最佳食用時間
+3. 如果可以吃，明確建議份量：
+   具體重量（克數）
+   視覺比對（拳頭/手掌/湯匙等）
+   建議頻率（每天/每週幾次）
+   最佳食用時間
 4. 如果不建議，提供份量明確的替代選項
 5. 針對用戶健康狀況的特別提醒
 
-請用專業但易懂的語言回應，讓用戶能精確執行建議。
+回應格式範例：
+💡 關於香蕉的建議
+
+✅ 可以適量食用
+
+🍌 建議份量：半根中型香蕉（約60g）= 約60大卡
+
+⏰ 最佳時機：運動後30分鐘或兩餐之間
+
+🩺 糖尿病注意：香蕉GI值中等，建議搭配堅果一起吃可緩解血糖上升
+
+請用純文字格式，多用表情符號，不要使用 # * ** 等符號。
 """
         
         # 使用 OpenAI 分析
@@ -1062,32 +1118,69 @@ def analyze_food_description(event, food_description):
         
         # 修改後的營養分析 Prompt
         nutrition_prompt = f"""
-你是一位擁有20年經驗的專業營養師。請根據用戶的個人資料和食物描述，提供個人化的營養分析：
+你是一位擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶實際吃的食物進行分析。
 
 {user_context}
 
-**重要要求：在建議中必須提供明確的份量指示**
+重要原則：
+1. 只分析用戶實際描述的食物，不要添加或建議其他餐點
+2. 不要假設用戶一天吃三餐，只分析這一餐
+3. 基於實際攝取提供建議，不要補足未吃的餐點
+4. 使用純文字格式，多用表情符號
 
 份量參考標準：
-🍚 **主食**: 1碗 = 1拳頭大 = 150-200g = 200-250大卡
-🥩 **蛋白質**: 1份 = 1手掌大厚度 = 100-120g = 120-200大卡
-🥬 **蔬菜**: 1份 = 煮熟100g = 生菜200g = 25-50大卡
-🥜 **堅果**: 1份 = 30g = 1湯匙 = 180大卡
-🍎 **水果**: 1份 = 1個拳頭大 = 150g = 60-100大卡
+🍚 主食: 1碗 = 1拳頭大 = 150-200g = 200-250大卡
+🥩 蛋白質: 1份 = 1手掌大厚度 = 100-120g = 120-200大卡
+🥬 蔬菜: 1份 = 煮熟100g = 生菜200g = 25-50大卡
+🥜 堅果: 1份 = 30g = 1湯匙 = 180大卡
+🍎 水果: 1份 = 1個拳頭大 = 150g = 60-100大卡
 
-請提供：
-1. 食物營養成分分析（蛋白質、碳水、脂肪、纖維等）
-2. 熱量估算（總熱量和各食物分別熱量）
-3. 基於用戶健康目標的個人化評估
-4. **下餐具體搭配建議**：
-   - 明確食物項目和份量（克數 + 視覺比對）
-   - 建議總熱量
-   - 營養平衡說明
-5. **長期改善建議**：
-   - 如何調整份量達到健康目標
-   - 具體的替換建議（含份量）
+糖尿病患者特別分析：
+重點分析血糖影響、計算醣類含量、評估GI值影響、建議血糖監測時機
 
-回應請用繁體中文，語調親切專業，讓用戶能精確執行建議。
+🔍 實際攝取分析：
+只分析用戶描述的這一餐，包括：
+- 估算熱量、碳水化合物、蛋白質、脂肪、纖維
+- 各食物分別的營養貢獻
+- 這餐的營養密度評估
+
+💡 這一餐評價：
+- 基於用戶健康目標評估這餐是否合適
+- 這餐的優點和可改進之處
+- 對血糖的影響（如有糖尿病）
+
+🍽️ 下次進食建議：
+當用戶想吃下一餐時，建議：
+- 適合的食物類型和份量
+- 與這餐的營養互補
+- 具體的食物選擇
+
+⚠️ 特別注意：
+- 不要建議用戶"今天還需要吃什麼來補足營養"
+- 不要假設一天必須吃三餐
+- 只針對實際吃的食物給建議
+- 尊重用戶的飲食節奏
+
+回應格式範例：
+🔍 你這餐吃的營養分析
+
+📊 實際攝取：
+熱量：約300大卡
+碳水化合物：35g
+蛋白質：20g
+脂肪：8g
+
+💡 這餐評價：
+蛋白質比例很好，有助肌肉維持
+碳水適中，不會造成血糖急升
+
+🍽️ 下次想吃的時候：
+可以選擇蔬菜類，補充纖維和維生素
+建議份量：綠葉蔬菜 150g（約1.5份）
+
+請只分析實際吃的食物，不要添加建議餐點。
+
+請用純文字格式，多用表情符號，讓回應清晰易讀。
 """
         
         # 使用 OpenAI 分析
@@ -1530,41 +1623,31 @@ def provide_meal_suggestions(event, user_message=""):
         
         # 修改後的建議 Prompt
         suggestion_prompt = """
-作為專業營養師，請根據用戶的個人資料、飲食習慣和詢問，提供個人化的餐點建議。
+你是擁有20年經驗的專業營養師。請根據用戶的飲食習慣提供建議。
 
-**重要要求：每個食物都必須提供明確的份量指示**
+重要原則：
+1. 基於用戶實際的飲食記錄，不假設標準三餐模式
+2. 考慮用戶可能不是每天三餐的飲食習慣
+3. 提供彈性的用餐建議
 
-請使用以下份量表達方式：
-🍚 **主食類**：
-- 白飯/糙米飯：1碗 = 1個拳頭大 = 約150-200g = 約200-250大卡
-- 麵條：1份 = 約100g乾重 = 煮熟後約200g
-- 吐司：1片全麥吐司 = 約30g = 約80大卡
-
-🥩 **蛋白質類**：
-- 雞胸肉：1份 = 1個手掌大小厚度 = 約100-120g = 約120-150大卡
-- 魚類：1份 = 手掌大小 = 約100g = 約100-150大卡
-- 蛋：1顆雞蛋 = 約50g = 約70大卡
-- 豆腐：1塊 = 手掌大小 = 約100g = 約80大卡
-
-🥬 **蔬菜類**：
-- 綠葉蔬菜：1份 = 煮熟後約100g = 生菜約200g = 約25大卡
-- 根莖類：1份 = 約100g = 約50-80大卡
-
-🥛 **其他**：
-- 堅果：1份 = 約30g = 約1湯匙 = 約180大卡
-- 油：1茶匙 = 約5ml = 約45大卡
+根據用戶最近的實際飲食記錄：
+{chr(10).join([f"- {meal[0]}" for meal in recent_meals[:5]])}
 
 請提供：
-1. 推薦3-5個適合的完整餐點組合
-2. 每個餐點包含：主食+蛋白質+蔬菜+適量油脂
-3. **每個食物項目都要標明：具體份量（克數）+ 視覺比對（拳頭/手掌等）+ 約略熱量**
-4. 總熱量估算
-5. 考慮用戶的健康目標和飲食限制
-6. 避免重複最近吃過的食物
-7. 提供簡單的製作方式或購買建議
-8. 說明選擇這些餐點的營養理由
+🍽️ 適合現在吃的餐點選項（2-3個）
 
-請提供實用、具體的建議，讓用戶可以精確執行。
+每個選項包含：
+- 具體食物和份量
+- 熱量估算
+- 為什麼適合現在吃
+- 簡單製作方式
+
+💡 彈性用餐建議：
+- 依照個人節奏進食
+- 餓了再吃，不需強迫三餐
+- 重視營養品質勝過餐數
+
+請提供實用建議，不要預設用戶的用餐時間表。
 """
         
         # 使用 OpenAI 生成建議
@@ -1775,47 +1858,50 @@ def analyze_food_description(event, food_description):
         
         # 修改後的營養分析 Prompt
         nutrition_prompt = f"""
-你是一位擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶的個人資料和食物描述，提供個人化的營養分析：
+你是一位擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶實際吃的食物進行分析。
 
 {user_context}
 
-**重要要求：在建議中必須提供明確的份量指示和營養數據**
+重要原則：
+1. 只分析用戶實際描述的食物，不要添加或建議其他餐點
+2. 不要假設用戶一天吃三餐，只分析這一餐
+3. 基於實際攝取提供建議，不要補足未吃的餐點
+4. 使用純文字格式，多用表情符號，不要使用 # * ** 等符號
 
 份量參考標準：
-🍚 **主食**: 1碗 = 1拳頭大 = 150-200g = 200-250大卡
-🥩 **蛋白質**: 1份 = 1手掌大厚度 = 100-120g = 120-200大卡
-🥬 **蔬菜**: 1份 = 煮熟100g = 生菜200g = 25-50大卡
-🥜 **堅果**: 1份 = 30g = 1湯匙 = 180大卡
-🍎 **水果**: 1份 = 1個拳頭大 = 150g = 60-100大卡
-
-**糖尿病患者特別分析**：
-- 重點分析血糖影響
-- 計算醣類含量
-- 評估GI值影響
-- 建議血糖監測時機
+🍚 主食: 1碗 = 1拳頭大 = 150-200g = 200-250大卡
+🥩 蛋白質: 1份 = 1手掌大厚度 = 100-120g = 120-200大卡
+🥬 蔬菜: 1份 = 煮熟100g = 生菜200g = 25-50大卡
+🥜 堅果: 1份 = 30g = 1湯匙 = 180大卡
+🍎 水果: 1份 = 1個拳頭大 = 150g = 60-100大卡
 
 請提供：
-1. **營養成分詳細分析**：
-   - 估算熱量、碳水化合物、蛋白質、脂肪、纖維
-   - 各食物分別的營養貢獻
-   - 醣類含量和GI值評估（糖尿病患者重要）
 
-2. **個人化評估**：
-   - 基於用戶健康目標的評價
-   - 與每日營養目標的對比
-   - 對血糖的可能影響（如有糖尿病）
+🔍 實際攝取分析：
+只分析用戶描述的這一餐，包括：
+熱量：約XX大卡
+碳水化合物：XXg
+蛋白質：XXg
+脂肪：XXg
+纖維：XXg
 
-3. **下餐具體搭配建議**：
-   - 明確食物項目和份量（克數 + 視覺比對）
-   - 建議總熱量和營養素分配
-   - 營養平衡說明
+💡 這一餐評價：
+基於用戶健康目標評估這餐是否合適
+這餐的優點和可改進之處
+對血糖的影響（如有糖尿病）
 
-4. **長期改善建議**：
-   - 如何調整份量達到健康目標
-   - 具體的替換建議（含份量）
-   - 糖尿病血糖控制建議（如適用）
+🍽️ 下次進食建議：
+當用戶想吃下一餐時的建議
+適合的食物類型和份量
+與這餐的營養互補
 
-回應請用繁體中文，語調親切專業，讓用戶能精確執行建議。
+特別注意：
+不要建議用戶"今天還需要吃什麼來補足營養"
+不要假設一天必須吃三餐
+只針對實際吃的食物給建議
+尊重用戶的飲食節奏
+
+請確保在回應中清楚標示各營養素的數值，格式如：熱量：300大卡，碳水化合物：45g
 """
         
         # 使用 OpenAI 分析
@@ -1835,17 +1921,52 @@ def analyze_food_description(event, food_description):
             
             analysis_result = response.choices[0].message.content
             
-            # 儲存飲食記錄
-            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result)
+            # 從分析結果中提取營養數據
+            nutrition_data = extract_nutrition_from_analysis(analysis_result)
+            
+            # 儲存飲食記錄（包含營養數據）
+            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result, nutrition_data)
+            
+            # 添加記錄確認訊息
+            confirmation_text = f"""
+
+✅ 已記錄你的{meal_type}
+
+📝 記錄內容：{food_description}
+📊 營養數據：
+熱量：{nutrition_data.get('calories', 0):.0f} 大卡
+碳水：{nutrition_data.get('carbs', 0):.1f}g
+蛋白質：{nutrition_data.get('protein', 0):.1f}g
+脂肪：{nutrition_data.get('fat', 0):.1f}g
+
+💡 輸入「今日進度」可查看累計營養攝取"""
+            
+            # 組合完整回應
+            full_response = f"🍽️ {meal_type}營養分析：\n\n{analysis_result}{confirmation_text}"
             
         except Exception as openai_error:
             analysis_result = f"OpenAI 分析暫時無法使用：{str(openai_error)}\n\n請確保 API 額度充足，或稍後再試。"
-            # 仍然儲存記錄，即使沒有詳細分析
-            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result)
+            
+            # 使用基本營養數據
+            nutrition_data = {'calories': 300, 'carbs': 45, 'protein': 15, 'fat': 10, 'fiber': 5, 'sugar': 8}
+            
+            # 仍然儲存記錄
+            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result, nutrition_data)
+            
+            confirmation_text = f"""
+
+✅ 已記錄你的{meal_type}
+
+📝 記錄內容：{food_description}
+📊 使用預估營養數據
+
+💡 輸入「今日進度」可查看累計營養攝取"""
+            
+            full_response = f"{analysis_result}{confirmation_text}"
         
         line_bot_api.push_message(
             event.source.user_id,
-            TextSendMessage(text=f"🍽️ {meal_type}營養分析：\n\n{analysis_result}")
+            TextSendMessage(text=full_response)
         )
         
     except Exception as e:
@@ -1858,20 +1979,49 @@ def analyze_food_description(event, food_description):
 
 
 def extract_nutrition_from_analysis(analysis_text):
-    """從分析文本中提取營養數據（簡化版）"""
+    """從分析文本中提取營養數據"""
     import re
     
-    # 簡單的正則表達式提取數字
-    calories_match = re.search(r'(\d+)\s*大卡', analysis_text)
-    carbs_match = re.search(r'碳水[^0-9]*(\d+(?:\.\d+)?)\s*g', analysis_text)
-    protein_match = re.search(r'蛋白質[^0-9]*(\d+(?:\.\d+)?)\s*g', analysis_text)
-    fat_match = re.search(r'脂肪[^0-9]*(\d+(?:\.\d+)?)\s*g', analysis_text)
+    # 改進的正則表達式提取
+    calories_patterns = [
+        r'熱量[:：]\s*約?(\d+(?:\.\d+)?)\s*大卡',
+        r'總熱量[:：]\s*約?(\d+(?:\.\d+)?)\s*大卡',
+        r'(\d+(?:\.\d+)?)\s*大卡'
+    ]
+    
+    carbs_patterns = [
+        r'碳水化合物[:：]\s*約?(\d+(?:\.\d+)?)\s*g',
+        r'碳水[:：]\s*約?(\d+(?:\.\d+)?)\s*g'
+    ]
+    
+    protein_patterns = [
+        r'蛋白質[:：]\s*約?(\d+(?:\.\d+)?)\s*g'
+    ]
+    
+    fat_patterns = [
+        r'脂肪[:：]\s*約?(\d+(?:\.\d+)?)\s*g'
+    ]
+    
+    def extract_value(patterns, text, default=0):
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                try:
+                    return float(match.group(1))
+                except:
+                    continue
+        return default
+    
+    calories = extract_value(calories_patterns, analysis_text, 300)
+    carbs = extract_value(carbs_patterns, analysis_text, 45)
+    protein = extract_value(protein_patterns, analysis_text, 15)
+    fat = extract_value(fat_patterns, analysis_text, 10)
     
     return {
-        'calories': float(calories_match.group(1)) if calories_match else 300,
-        'carbs': float(carbs_match.group(1)) if carbs_match else 45,
-        'protein': float(protein_match.group(1)) if protein_match else 15,
-        'fat': float(fat_match.group(1)) if fat_match else 10,
+        'calories': calories,
+        'carbs': carbs,
+        'protein': protein,
+        'fat': fat,
         'fiber': 5,  # 預設值
         'sugar': 8   # 預設值
     }
