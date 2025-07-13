@@ -2,6 +2,10 @@ import os
 import json
 import sqlite3
 import re
+import requests
+import threading
+import time
+
 from datetime import datetime, timedelta
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -2173,10 +2177,27 @@ def generate_detailed_food_consultation(question, user):
     
     return consultation
 
+def keep_alive():
+    """保持服務活躍"""
+    while True:
+        try:
+            time.sleep(600)  # 等待10分鐘
+            # 請把下面的網址改成你的Render網址
+            requests.get("https://nutrition-linebot.onrender.com")
+            print("Keep alive ping sent")
+        except:
+            pass
+
+@app.route("/health", methods=['GET'])
+def health_check():
+    return "OK", 200
 
 
 if __name__ == "__main__":
     # 啟動排程器
+    keep_alive_thread = threading.Thread(target=keep_alive)
+    keep_alive_thread.daemon = True
+    keep_alive_thread.start()
     start_scheduler()
     port = int(os.environ.get('PORT', 5000))
     print(f"啟動20年經驗糖尿病專業營養師機器人在端口 {port}")
