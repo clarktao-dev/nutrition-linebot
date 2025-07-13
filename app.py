@@ -434,10 +434,6 @@ def handle_welcome(event):
     )
 
 def provide_meal_suggestions(event, user_message=""):
-這兩個問題我來幫你解決：
-問題1：Unknown format code 'f' 錯誤
-這是因為在字串格式化時，有些值可能是 None 或字串類型。需要修正 provide_meal_suggestions 函數：
-pythondef provide_meal_suggestions(event, user_message=""):
     """提供飲食建議"""
     user_id = event.source.user_id
     user = UserManager.get_user(user_id)
