@@ -47,9 +47,89 @@ def init_db():
             health_goals TEXT,
             dietary_restrictions TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            body_fat_percentage REAL DEFAULT 0,
+            diabetes_type TEXT,
+            target_calories REAL DEFAULT 2000,
+            target_carbs REAL DEFAULT 250,
+            target_protein REAL DEFAULT 100,
+            target_fat REAL DEFAULT 70,
+            bmr REAL DEFAULT 1500,
+            tdee REAL DEFAULT 2000,
+            last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_reminder_sent TIMESTAMP,
+            last_profile_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            visceral_fat_level INTEGER DEFAULT 0,
+            muscle_mass REAL DEFAULT 0
         )
     ''')
+    
+    # 添加新欄位到現有表格（如果不存在）
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN body_fat_percentage REAL DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass  # 欄位已存在
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN diabetes_type TEXT')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN target_calories REAL DEFAULT 2000')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN target_carbs REAL DEFAULT 250')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN target_protein REAL DEFAULT 100')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN target_fat REAL DEFAULT 70')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN bmr REAL DEFAULT 1500')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN tdee REAL DEFAULT 2000')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN last_reminder_sent TIMESTAMP')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN last_profile_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN visceral_fat_level INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN muscle_mass REAL DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+
     
     # 飲食記錄表
     cursor.execute('''
@@ -96,13 +176,42 @@ class UserManager:
     def save_user(user_id, user_data):
         conn = sqlite3.connect('nutrition_bot.db')
         cursor = conn.cursor()
+        
+        # 計算基本 BMI 和預設營養目標
+        height_m = user_data['height'] / 100
+        bmi = user_data['weight'] / (height_m ** 2)
+        
+        # 簡單的熱量計算（可以後續改進）
+        if user_data['gender'] == '男性':
+            bmr = 88.362 + (13.397 * user_data['weight']) + (4.799 * user_data['height']) - (5.677 * user_data['age'])
+        else:
+            bmr = 447.593 + (9.247 * user_data['weight']) + (3.098 * user_data['height']) - (4.330 * user_data['age'])
+        
+        # 活動係數
+        activity_multiplier = {'低活動量': 1.2, '中等活動量': 1.55, '高活動量': 1.9}
+        tdee = bmr * activity_multiplier.get(user_data['activity_level'], 1.2)
+        
+        # 營養素分配 (碳水50%, 蛋白質20%, 脂肪30%)
+        target_calories = tdee
+        target_carbs = (tdee * 0.5) / 4  # 碳水1g = 4卡
+        target_protein = (tdee * 0.2) / 4  # 蛋白質1g = 4卡
+        target_fat = (tdee * 0.3) / 9  # 脂肪1g = 9卡
+        
         cursor.execute('''
             INSERT OR REPLACE INTO users 
-            (user_id, name, age, gender, height, weight, activity_level, health_goals, dietary_restrictions, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (user_id, user_data['name'], user_data['age'], user_data['gender'],
-              user_data['height'], user_data['weight'], user_data['activity_level'],
-              user_data['health_goals'], user_data['dietary_restrictions']))
+            (user_id, name, age, gender, height, weight, activity_level, health_goals, 
+            dietary_restrictions, body_fat_percentage, diabetes_type, target_calories, 
+            target_carbs, target_protein, target_fat, bmr, tdee, last_active, 
+            last_profile_update, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ''', (
+            user_id, user_data['name'], user_data['age'], user_data['gender'],
+            user_data['height'], user_data['weight'], user_data['activity_level'],
+            user_data['health_goals'], user_data['dietary_restrictions'],
+            user_data.get('body_fat_percentage', 0), user_data.get('diabetes_type'),
+            target_calories, target_carbs, target_protein, target_fat, bmr, tdee
+        ))
         conn.commit()
         conn.close()
     
