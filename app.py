@@ -35,7 +35,7 @@ user_states = {}
 
 # 資料庫初始化
 def init_db():
-    conn = sqlite3.connect('nutrition_bot.db')
+    conn = sqlite3.connect('nutrition_bot.db', timeout=２0.0)
     cursor = conn.cursor()
     
     # 用戶資料表
@@ -226,7 +226,15 @@ def init_db():
     ''')
     
     conn.commit()
-    conn.close()
+    print("資料庫初始化成功")
+    
+except Exception as e:
+    if conn:
+        conn.rollback()
+    print(f"資料庫初始化失敗：{e}")
+finally:
+    if conn:
+        conn.close()
 
 # 初始化資料庫
 init_db()
@@ -234,13 +242,43 @@ init_db()
 class UserManager:
     @staticmethod
     def get_user(user_id):
-        conn = sqlite3.connect('nutrition_bot.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-        user = cursor.fetchone()
-        conn.close()
-        return user
+        conn = None
+        try:
+            conn = sqlite3.connect('nutrition_bot.db', timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+            user = cursor.fetchone()
+            return user
+        except Exception as e:
+            print(f"取得用戶資料錯誤：{e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
     
+    @staticmethod
+    def get_daily_nutrition(user_id, date=None):
+        """取得每日營養總結"""
+        if date is None:
+            date = datetime.now().strftime('%Y-%m-%d')
+        
+        conn = None
+        try:
+            conn = sqlite3.connect('nutrition_bot.db', timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM daily_nutrition WHERE user_id = ? AND date = ?
+            ''', (user_id, date))
+            result = cursor.fetchone()
+            return result
+        except Exception as e:
+            print(f"取得每日營養總結錯誤：{e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+
+
     @staticmethod
     def save_user(user_id, user_data):
         conn = sqlite3.connect('nutrition_bot.db')
@@ -284,51 +322,152 @@ class UserManager:
         conn.commit()
         conn.close()
     
-    @staticmethod
+    @staticmethod  
     def save_meal_record(user_id, meal_type, meal_description, analysis, nutrition_data=None):
-        conn = sqlite3.connect('nutrition_bot.db')
-        cursor = conn.cursor()
-        
-        # 檢查表格是否有營養素欄位
-        cursor.execute("PRAGMA table_info(meal_records)")
-        columns = [column[1] for column in cursor.fetchall()]
-        
-        has_nutrition_columns = all(col in columns for col in ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar'])
-        
-        if has_nutrition_columns and nutrition_data:
-            # 如果有營養素欄位，儲存完整數據
+        conn = None
+        try:
+            conn = sqlite3.connect('nutrition_bot.db', timeout=20.0)
+            cursor = conn.cursor()
+            
+            # 檢查表格是否有營養素欄位
+            cursor.execute("PRAGMA table_info(meal_records)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            has_nutrition_columns = all(col in columns for col in ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar'])
+            
+            if has_nutrition_columns and nutrition_data:
+                # 如果有營養素欄位，儲存完整數據
+                cursor.execute('''
+                    INSERT INTO meal_records 
+                    (user_id, meal_type, meal_description, nutrition_analysis,
+                    calories, carbs, protein, fat, fiber, sugar)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    user_id, meal_type, meal_description, analysis,
+                    nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
+                    nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
+                    nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0)
+                ))
+            else:
+                # 如果沒有營養素欄位，只儲存基本數據
+                cursor.execute('''
+                    INSERT INTO meal_records 
+                    (user_id, meal_type, meal_description, nutrition_analysis)
+                    VALUES (?, ?, ?, ?)
+                ''', (user_id, meal_type, meal_description, analysis))
+            
+            conn.commit()
+            print(f"已儲存飲食記錄：{meal_type} - {meal_description}")
+            
+            # 在同一個連線中更新其他數據
+            if nutrition_data:
+                UserManager._update_daily_nutrition_with_conn(conn, user_id, nutrition_data)
+            UserManager._update_food_preferences_with_conn(conn, user_id, meal_description)
+            
+            conn.commit()
+            
+        except sqlite3.OperationalError as e:
+            if conn:
+                conn.rollback()
+            print(f"資料庫操作錯誤：{e}")
+            raise e
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            print(f"儲存記錄時發生錯誤：{e}")
+            raise e
+        finally:
+            if conn:
+                conn.close()
+    
+    @staticmethod
+    def _update_daily_nutrition_with_conn(conn, user_id, nutrition_data):
+        """使用現有連線更新每日營養總結"""
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            cursor = conn.cursor()
+            
+            # 檢查並創建 daily_nutrition 表
             cursor.execute('''
-                INSERT INTO meal_records 
-                (user_id, meal_type, meal_description, nutrition_analysis,
-                calories, carbs, protein, fat, fiber, sugar)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                CREATE TABLE IF NOT EXISTS daily_nutrition (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
+                    date TEXT,
+                    total_calories REAL DEFAULT 0,
+                    total_carbs REAL DEFAULT 0,
+                    total_protein REAL DEFAULT 0,
+                    total_fat REAL DEFAULT 0,
+                    total_fiber REAL DEFAULT 0,
+                    total_sugar REAL DEFAULT 0,
+                    meal_count INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, date),
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            ''')
+            
+            cursor.execute('''
+                INSERT OR IGNORE INTO daily_nutrition (user_id, date) VALUES (?, ?)
+            ''', (user_id, today))
+            
+            cursor.execute('''
+                UPDATE daily_nutrition SET
+                    total_calories = total_calories + ?,
+                    total_carbs = total_carbs + ?,
+                    total_protein = total_protein + ?,
+                    total_fat = total_fat + ?,
+                    total_fiber = total_fiber + ?,
+                    total_sugar = total_sugar + ?,
+                    meal_count = meal_count + 1
+                WHERE user_id = ? AND date = ?
             ''', (
-                user_id, meal_type, meal_description, analysis,
                 nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
                 nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
-                nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0)
+                nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0),
+                user_id, today
             ))
             
-            # 更新每日營養總結
-            UserManager.update_daily_nutrition(user_id, nutrition_data)
-        else:
-            # 如果沒有營養素欄位，只儲存基本數據
-            cursor.execute('''
-                INSERT INTO meal_records 
-                (user_id, meal_type, meal_description, nutrition_analysis)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, meal_type, meal_description, analysis))
+        except Exception as e:
+            print(f"更新每日營養總結失敗：{e}")
+
+    @staticmethod
+    def _update_food_preferences_with_conn(conn, user_id, meal_description):
+        """使用現有連線更新食物偏好記錄"""
+        try:
+            cursor = conn.cursor()
             
-            print("警告：營養素欄位不存在，只儲存基本記錄")
-        
-        # 更新食物偏好
-        UserManager.update_food_preferences(user_id, meal_description)
-        
-        conn.commit()
-        conn.close()
-        
-        print(f"已儲存飲食記錄：{meal_type} - {meal_description}")
-    
+            # 擴展食物關鍵字
+            food_keywords = [
+                '飯', '麵', '雞肉', '豬肉', '牛肉', '魚', '蝦', '蛋', '豆腐', 
+                '青菜', '高麗菜', '菠菜', '蘿蔔', '番茄', '馬鈴薯', '地瓜',
+                '便當', '沙拉', '湯', '粥', '麵包', '水果', '優格', '堅果',
+                '糙米', '燕麥', '雞胸肉', '鮭魚', '酪梨', '花椰菜'
+            ]
+            
+            for keyword in food_keywords:
+                if keyword in meal_description:
+                    cursor.execute('''
+                        SELECT frequency FROM food_preferences 
+                        WHERE user_id = ? AND food_item = ?
+                    ''', (user_id, keyword))
+                    result = cursor.fetchone()
+                    
+                    if result:
+                        cursor.execute('''
+                            UPDATE food_preferences 
+                            SET frequency = frequency + 1, last_eaten = CURRENT_TIMESTAMP
+                            WHERE user_id = ? AND food_item = ?
+                        ''', (user_id, keyword))
+                    else:
+                        cursor.execute('''
+                            INSERT INTO food_preferences (user_id, food_item)
+                            VALUES (?, ?)
+                        ''', (user_id, keyword))
+            
+        except Exception as e:
+            print(f"更新食物偏好失敗：{e}")
+
+
     @staticmethod
     def update_food_preferences(user_id, meal_description):
         """更新用戶食物偏好記錄"""
@@ -422,18 +561,25 @@ class UserManager:
 
     @staticmethod
     def get_weekly_meals(user_id):
-        conn = sqlite3.connect('nutrition_bot.db')
-        cursor = conn.cursor()
-        week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute('''
-            SELECT meal_type, meal_description, nutrition_analysis, recorded_at
-            FROM meal_records 
-            WHERE user_id = ? AND recorded_at >= ?
-            ORDER BY recorded_at DESC
-        ''', (user_id, week_ago))
-        records = cursor.fetchall()
-        conn.close()
-        return records
+        conn = None
+        try:
+            conn = sqlite3.connect('nutrition_bot.db', timeout=10.0)
+            cursor = conn.cursor()
+            week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute('''
+                SELECT meal_type, meal_description, nutrition_analysis, recorded_at
+                FROM meal_records 
+                WHERE user_id = ? AND recorded_at >= ?
+                ORDER BY recorded_at DESC
+            ''', (user_id, week_ago))
+            records = cursor.fetchall()
+            return records
+        except Exception as e:
+            print(f"取得週記錄錯誤：{e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
     
     @staticmethod
     def get_food_preferences(user_id, limit=10):
