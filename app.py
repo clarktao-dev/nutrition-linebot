@@ -94,8 +94,11 @@ def handle_image_message(event):
         image_data = b''.join(message_content.iter_content())
         image_base64 = base64.b64encode(image_data).decode('utf-8')
         
-        # 使用 OpenAI 分析圖片
-        response = openai.ChatCompletion.create(
+        # 使用新的 OpenAI 語法
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        response = client.chat.completions.create(
             model="gpt-4-vision-preview",
             messages=[
                 {
@@ -136,7 +139,4 @@ def handle_image_message(event):
             event.source.user_id,
             TextSendMessage(text=error_message)
         )
-
-if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+        
