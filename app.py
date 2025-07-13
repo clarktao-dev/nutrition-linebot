@@ -1161,6 +1161,7 @@ class EmailReporter:
         except Exception as e:
             print(f"發送報告失敗：{e}")
 
+
 def schedule_tasks():
     """排程任務"""
     import schedule
@@ -1169,8 +1170,8 @@ def schedule_tasks():
     # 每日9點發送提醒
     schedule.every().day.at("09:00").do(ReminderSystem.send_daily_reminder)
     
-    # 每月1號發送更新提醒  
-    schedule.every().month.do(ReminderSystem.send_profile_update_reminder)
+    # 每月1號發送更新提醒（改為每30天）
+    schedule.every(1).days.do(ReminderSystem.send_profile_update_reminder)
     
     # 每日23點發送使用報告
     schedule.every().day.at("23:00").do(EmailReporter.generate_daily_report)
@@ -1770,7 +1771,7 @@ def analyze_food_description(event, food_description):
             event.source.user_id,
             TextSendMessage(text=error_message)
         )
-        
+
 
 def extract_nutrition_from_analysis(analysis_text):
     """從分析文本中提取營養數據（簡化版）"""
