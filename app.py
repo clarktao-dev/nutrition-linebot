@@ -434,6 +434,10 @@ def handle_welcome(event):
     )
 
 def provide_meal_suggestions(event, user_message=""):
+這兩個問題我來幫你解決：
+問題1：Unknown format code 'f' 錯誤
+這是因為在字串格式化時，有些值可能是 None 或字串類型。需要修正 provide_meal_suggestions 函數：
+pythondef provide_meal_suggestions(event, user_message=""):
     """提供飲食建議"""
     user_id = event.source.user_id
     user = UserManager.get_user(user_id)
@@ -455,13 +459,22 @@ def provide_meal_suggestions(event, user_message=""):
         recent_meals = UserManager.get_recent_meals(user_id)
         food_preferences = UserManager.get_food_preferences(user_id)
         
-        # 準備上下文資訊
+        # 安全地取得用戶資料，避免 None 值和格式化錯誤
+        def safe_get(value, default=0):
+            return value if value is not None else default
+        
+        diabetes_context = f"糖尿病類型：{user[12]}" if user[12] else "無糖尿病"
+        
         user_context = f"""
 用戶資料：{user[1]}，{user[2]}歲，{user[3]}
-身高：{user[4]}cm，體重：{user[5]}kg
+身高：{user[4]}cm，體重：{user[5]}kg，體脂率：{safe_get(user[11], 0):.1f}%
 活動量：{user[6]}
 健康目標：{user[7]}
 飲食限制：{user[8]}
+{diabetes_context}
+
+每日營養目標：
+熱量：{safe_get(user[13], 2000):.0f}大卡，碳水：{safe_get(user[14], 250):.0f}g，蛋白質：{safe_get(user[15], 100):.0f}g，脂肪：{safe_get(user[16], 70):.0f}g
 
 最近3天飲食：
 {chr(10).join([f"- {meal[0]}" for meal in recent_meals[:5]])}
@@ -471,7 +484,7 @@ def provide_meal_suggestions(event, user_message=""):
 
 用戶詢問：{user_message}
 """
-        
+
         # 修改後的建議 Prompt
         suggestion_prompt = """
 作為專業營養師，請根據用戶的個人資料、飲食習慣和詢問，提供個人化的餐點建議。
@@ -743,10 +756,55 @@ def handle_profile_setup_flow(event, message_text):
                 TextSendMessage(text="請輸入有效的身高數字：")
             )
     
-    elif current_step == 'weight':
-        try:
-            weight = float(message_text)
-            user_states[user_id]['data']['weight'] = weight
+elif current_step == 'weight':
+    try:
+        weight = float(message_text)
+        user_states[user_id]['data']['weight'] = weight
+        user_states[user_id]['step'] = 'body_fat'
+        
+        # 估算體脂率
+        data = user_states[user_id]['data']
+        height_m = data['height'] / 100
+        bmi = weight / (height_m ** 2)
+        
+        # 簡單的體脂率估算
+        if data['gender'] == '男性':
+            estimated_body_fat = (1.20 * bmi) + (0.23 * data['age']) - 16.2
+        else:
+            estimated_body_fat = (1.20 * bmi) + (0.23 * data['age']) - 5.4
+        
+        estimated_body_fat = max(5, min(50, estimated_body_fat))
+        
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label=f"使用估算值 {estimated_body_fat:.1f}%", text=f"估算 {estimated_body_fat:.1f}")),
+            QuickReplyButton(action=MessageAction(label="輸入實測值", text="實測值")),
+            QuickReplyButton(action=MessageAction(label="跳過此項", text="跳過體脂"))
+        ])
+        
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"📊 體脂率設定\n\n根據你的BMI，估算體脂率約為 {estimated_body_fat:.1f}%\n\n請選擇：", quick_reply=quick_reply)
+        )
+    except ValueError:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="請輸入有效的體重數字：")
+        )
+
+    elif current_step == 'body_fat':
+        if "估算" in message_text:
+            # 使用估算值
+            data = user_states[user_id]['data']
+            height_m = data['height'] / 100
+            bmi = data['weight'] / (height_m ** 2)
+            
+            if data['gender'] == '男性':
+                body_fat = (1.20 * bmi) + (0.23 * data['age']) - 16.2
+            else:
+                body_fat = (1.20 * bmi) + (0.23 * data['age']) - 5.4
+            
+            body_fat = max(5, min(50, body_fat))
+            user_states[user_id]['data']['body_fat_percentage'] = body_fat
             user_states[user_id]['step'] = 'activity'
             
             quick_reply = QuickReply(items=[
@@ -759,10 +817,53 @@ def handle_profile_setup_flow(event, message_text):
                 event.reply_token,
                 TextSendMessage(text="請選擇你的活動量：", quick_reply=quick_reply)
             )
+        elif "實測值" in message_text:
+            user_states[user_id]['step'] = 'body_fat_input'
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="請輸入你實際測量的體脂率（%）：")
+            )
+        elif "跳過" in message_text:
+            user_states[user_id]['data']['body_fat_percentage'] = 0
+            user_states[user_id]['step'] = 'activity'
+            
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="低活動量", text="低活動量")),
+                QuickReplyButton(action=MessageAction(label="中等活動量", text="中等活動量")),
+                QuickReplyButton(action=MessageAction(label="高活動量", text="高活動量"))
+            ])
+            
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="請選擇你的活動量：", quick_reply=quick_reply)
+            )
+
+    elif current_step == 'body_fat_input':
+        try:
+            body_fat = float(message_text)
+            if 5 <= body_fat <= 50:
+                user_states[user_id]['data']['body_fat_percentage'] = body_fat
+                user_states[user_id]['step'] = 'activity'
+                
+                quick_reply = QuickReply(items=[
+                    QuickReplyButton(action=MessageAction(label="低活動量", text="低活動量")),
+                    QuickReplyButton(action=MessageAction(label="中等活動量", text="中等活動量")),
+                    QuickReplyButton(action=MessageAction(label="高活動量", text="高活動量"))
+                ])
+                
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="請選擇你的活動量：", quick_reply=quick_reply)
+                )
+            else:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="體脂率應在5-50%之間，請重新輸入：")
+                )
         except ValueError:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="請輸入有效的體重數字：")
+                TextSendMessage(text="請輸入有效的體脂率數字：")
             )
     
     elif current_step == 'activity':
