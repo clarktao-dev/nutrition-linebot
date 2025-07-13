@@ -921,6 +921,71 @@ def generate_detailed_food_consultation(question, user):
     
     return consultation
 
+
+class ReminderSystem:
+    """提醒系統"""
+    
+    @staticmethod
+    def send_daily_reminder():
+        """發送每日提醒"""
+        try:
+            # 這裡可以添加主動提醒邏輯
+            print("每日提醒系統運行中...")
+        except Exception as e:
+            print(f"發送提醒失敗: {e}")
+    
+    @staticmethod
+    def send_profile_update_reminder():
+        """發送個人資料更新提醒"""
+        try:
+            # 這裡可以添加更新提醒邏輯
+            print("個人資料更新提醒系統運行中...")
+        except Exception as e:
+            print(f"發送更新提醒失敗: {e}")
+
+class EmailReporter:
+    """Email 報告系統"""
+    
+    @staticmethod
+    def generate_daily_report():
+        """生成每日使用者報告"""
+        try:
+            # 這裡可以添加每日報告邏輯
+            print("每日報告生成中...")
+        except Exception as e:
+            print(f"發送報告失敗：{e}")
+
+def schedule_tasks():
+    """排程任務"""
+    import schedule
+    import time
+    
+    # 每日9點發送提醒
+    schedule.every().day.at("09:00").do(ReminderSystem.send_daily_reminder)
+    
+    # 每月1號發送更新提醒  
+    schedule.every().month.do(ReminderSystem.send_profile_update_reminder)
+    
+    # 每日23點發送使用報告
+    schedule.every().day.at("23:00").do(EmailReporter.generate_daily_report)
+    
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+def start_scheduler():
+    """啟動排程器"""
+    import threading
+    try:
+        scheduler_thread = threading.Thread(target=schedule_tasks)
+        scheduler_thread.daemon = True
+        scheduler_thread.start()
+        print("排程系統已啟動")
+    except Exception as e:
+        print(f"排程系統啟動失敗：{e}")
+
+
+
 def generate_weekly_report(event):
     user_id = event.source.user_id
     user = UserManager.get_user(user_id)
@@ -1842,10 +1907,11 @@ def generate_detailed_food_consultation(question, user):
     
     return consultation
 
-# 啟動排程器
-start_scheduler()
+
 
 if __name__ == "__main__":
+    # 啟動排程器
+    start_scheduler()
     port = int(os.environ.get('PORT', 5000))
     print(f"啟動20年經驗糖尿病專業營養師機器人在端口 {port}")
     print("主要功能：")
