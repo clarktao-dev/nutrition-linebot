@@ -1,6 +1,5 @@
 import os
 import base64
-import openai
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -17,10 +16,16 @@ LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
+# 檢查環境變數
+if not all([LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN, OPENAI_API_KEY]):
+    print("錯誤：環境變數缺失")
+    print(f"LINE_CHANNEL_SECRET: {'✓' if LINE_CHANNEL_SECRET else '✗'}")
+    print(f"LINE_CHANNEL_ACCESS_TOKEN: {'✓' if LINE_CHANNEL_ACCESS_TOKEN else '✗'}")
+    print(f"OPENAI_API_KEY: {'✓' if OPENAI_API_KEY else '✗'}")
+
 # 初始化
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
-openai.api_key = OPENAI_API_KEY
 
 # 營養師角色設定
 NUTRITION_PROMPT = """
@@ -32,6 +37,10 @@ NUTRITION_PROMPT = """
 
 請用親切、專業的語調回應，就像家庭營養師一樣。回應請用繁體中文。
 """
+
+@app.route("/", methods=['GET'])
+def home():
+    return "營養師機器人正在運行中！", 200
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -94,37 +103,41 @@ def handle_image_message(event):
         image_data = b''.join(message_content.iter_content())
         image_base64 = base64.b64encode(image_data).decode('utf-8')
         
-        # 使用新的 OpenAI 語法
-        from openai import OpenAI
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        
-        response = client.chat.completions.create(
-            model="gpt-4-vision-preview",
-            messages=[
-                {
-                    "role": "system",
-                    "content": NUTRITION_PROMPT
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "請詳細分析這張食物照片的營養成分，並提供專業的營養師建議。"
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_base64}"
+        # 使用 OpenAI 分析
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            
+            response = client.chat.completions.create(
+                model="gpt-4o",  # 改用更新的模型
+                messages=[
+                    {
+                        "role": "system",
+                        "content": NUTRITION_PROMPT
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "請詳細分析這張食物照片的營養成分，並提供專業的營養師建議。"
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_base64}"
+                                }
                             }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=1000
-        )
-        
-        analysis_result = response.choices[0].message.content
+                        ]
+                    }
+                ],
+                max_tokens=1000
+            )
+            
+            analysis_result = response.choices[0].message.content
+            
+        except Exception as openai_error:
+            analysis_result = f"OpenAI 分析失敗：{str(openai_error)}"
         
         # 發送分析結果
         line_bot_api.push_message(
@@ -139,4 +152,8 @@ def handle_image_message(event):
             event.source.user_id,
             TextSendMessage(text=error_message)
         )
-        
+
+if __name__ == "__main__":
+    port = int(os.environ.get('PORT', 5000))
+    print(f"啟動應用程式在端口 {port}")
+    app.run(host='0.0.0.0', port=port, debug=True)
