@@ -147,7 +147,72 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (user_id)
         )
     ''')
+    # 添加新的營養素欄位（如果不存在）
+    nutrition_columns = [
+        ('calories', 'REAL DEFAULT 0'),
+        ('carbs', 'REAL DEFAULT 0'),
+        ('protein', 'REAL DEFAULT 0'),
+        ('fat', 'REAL DEFAULT 0'),
+        ('fiber', 'REAL DEFAULT 0'),
+        ('sugar', 'REAL DEFAULT 0')
+    ]
     
+    for column_name, column_type in nutrition_columns:
+        try:
+            cursor.execute(f'ALTER TABLE meal_records ADD COLUMN {column_name} {column_type}')
+            print(f"已添加欄位：{column_name}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                print(f"欄位 {column_name} 已存在")
+            else:
+                print(f"添加欄位 {column_name} 時發生錯誤：{e}")
+    
+    # 添加用戶表的新欄位
+    user_columns = [
+        ('body_fat_percentage', 'REAL DEFAULT 0'),
+        ('diabetes_type', 'TEXT'),
+        ('target_calories', 'REAL DEFAULT 2000'),
+        ('target_carbs', 'REAL DEFAULT 250'),
+        ('target_protein', 'REAL DEFAULT 100'),
+        ('target_fat', 'REAL DEFAULT 70'),
+        ('bmr', 'REAL DEFAULT 1500'),
+        ('tdee', 'REAL DEFAULT 2000'),
+        ('last_active', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'),
+        ('last_reminder_sent', 'TIMESTAMP'),
+        ('last_profile_update', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'),
+        ('visceral_fat_level', 'INTEGER DEFAULT 0'),
+        ('muscle_mass', 'REAL DEFAULT 0')
+    ]
+    
+    for column_name, column_type in user_columns:
+        try:
+            cursor.execute(f'ALTER TABLE users ADD COLUMN {column_name} {column_type}')
+            print(f"已添加用戶欄位：{column_name}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                pass  # 欄位已存在，忽略
+            else:
+                print(f"添加用戶欄位 {column_name} 時發生錯誤：{e}")
+    
+    # 每日營養總結表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS daily_nutrition (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            date TEXT,
+            total_calories REAL DEFAULT 0,
+            total_carbs REAL DEFAULT 0,
+            total_protein REAL DEFAULT 0,
+            total_fat REAL DEFAULT 0,
+            total_fiber REAL DEFAULT 0,
+            total_sugar REAL DEFAULT 0,
+            meal_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, date),
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+    ''')
+
     # 飲食偏好表（記錄用戶常吃的食物）
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS food_preferences (
@@ -224,24 +289,37 @@ class UserManager:
         conn = sqlite3.connect('nutrition_bot.db')
         cursor = conn.cursor()
         
-        # 如果沒有提供營養數據，嘗試從分析中提取
-        if nutrition_data is None:
-            nutrition_data = extract_nutrition_from_analysis(analysis)
+        # 檢查表格是否有營養素欄位
+        cursor.execute("PRAGMA table_info(meal_records)")
+        columns = [column[1] for column in cursor.fetchall()]
         
-        cursor.execute('''
-            INSERT INTO meal_records 
-            (user_id, meal_type, meal_description, nutrition_analysis,
-            calories, carbs, protein, fat, fiber, sugar)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            user_id, meal_type, meal_description, analysis,
-            nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
-            nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
-            nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0)
-        ))
+        has_nutrition_columns = all(col in columns for col in ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar'])
         
-        # 更新每日營養總結
-        UserManager.update_daily_nutrition(user_id, nutrition_data)
+        if has_nutrition_columns and nutrition_data:
+            # 如果有營養素欄位，儲存完整數據
+            cursor.execute('''
+                INSERT INTO meal_records 
+                (user_id, meal_type, meal_description, nutrition_analysis,
+                calories, carbs, protein, fat, fiber, sugar)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id, meal_type, meal_description, analysis,
+                nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
+                nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
+                nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0)
+            ))
+            
+            # 更新每日營養總結
+            UserManager.update_daily_nutrition(user_id, nutrition_data)
+        else:
+            # 如果沒有營養素欄位，只儲存基本數據
+            cursor.execute('''
+                INSERT INTO meal_records 
+                (user_id, meal_type, meal_description, nutrition_analysis)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, meal_type, meal_description, analysis))
+            
+            print("警告：營養素欄位不存在，只儲存基本記錄")
         
         # 更新食物偏好
         UserManager.update_food_preferences(user_id, meal_description)
@@ -249,7 +327,6 @@ class UserManager:
         conn.commit()
         conn.close()
         
-        # 添加確認訊息
         print(f"已儲存飲食記錄：{meal_type} - {meal_description}")
     
     @staticmethod
@@ -289,6 +366,60 @@ class UserManager:
         conn.commit()
         conn.close()
     
+    @staticmethod
+    def update_daily_nutrition(user_id, nutrition_data):
+        """更新每日營養總結"""
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            conn = sqlite3.connect('nutrition_bot.db')
+            cursor = conn.cursor()
+            
+            # 檢查 daily_nutrition 表是否存在
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS daily_nutrition (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
+                    date TEXT,
+                    total_calories REAL DEFAULT 0,
+                    total_carbs REAL DEFAULT 0,
+                    total_protein REAL DEFAULT 0,
+                    total_fat REAL DEFAULT 0,
+                    total_fiber REAL DEFAULT 0,
+                    total_sugar REAL DEFAULT 0,
+                    meal_count INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, date),
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            ''')
+            
+            cursor.execute('''
+                INSERT OR IGNORE INTO daily_nutrition (user_id, date) VALUES (?, ?)
+            ''', (user_id, today))
+            
+            cursor.execute('''
+                UPDATE daily_nutrition SET
+                    total_calories = total_calories + ?,
+                    total_carbs = total_carbs + ?,
+                    total_protein = total_protein + ?,
+                    total_fat = total_fat + ?,
+                    total_fiber = total_fiber + ?,
+                    total_sugar = total_sugar + ?,
+                    meal_count = meal_count + 1
+                WHERE user_id = ? AND date = ?
+            ''', (
+                nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
+                nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
+                nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0),
+                user_id, today
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            print(f"更新每日營養總結失敗：{e}")
+
     @staticmethod
     def get_weekly_meals(user_id):
         conn = sqlite3.connect('nutrition_bot.db')
@@ -2261,7 +2392,7 @@ def generate_weekly_report(event):
         event.reply_token,
         TextSendMessage(text=final_report)
     )
-    
+
 
 def show_user_profile(event):
     user_id = event.source.user_id
