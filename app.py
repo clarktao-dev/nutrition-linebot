@@ -413,15 +413,24 @@ class UserManager:
                 )
             ''')
             
-            # 🔧 修正：先檢查今日記錄是否存在
+            # 🔧 重要修正：計算今日實際餐數
+            cursor.execute('''
+                SELECT COUNT(*) FROM meal_records 
+                WHERE user_id = ? AND DATE(recorded_at) = ?
+            ''', (user_id, today))
+            actual_meal_count = cursor.fetchone()[0]
+            
+            print(f"🔍 DEBUG - 查詢到的實際餐數：{actual_meal_count}")
+            
+            # 檢查今日記錄是否存在
             cursor.execute('''
                 SELECT total_calories, total_carbs, total_protein, total_fat, meal_count 
                 FROM daily_nutrition WHERE user_id = ? AND date = ?
             ''', (user_id, today))
             existing_record = cursor.fetchone()
-            
+
             if existing_record:
-                # 更新現有記錄
+                # 🔧 修正：更新現有記錄，但餐數基於實際計算
                 cursor.execute('''
                     UPDATE daily_nutrition SET
                         total_calories = total_calories + ?,
@@ -430,31 +439,33 @@ class UserManager:
                         total_fat = total_fat + ?,
                         total_fiber = total_fiber + ?,
                         total_sugar = total_sugar + ?,
-                        meal_count = meal_count + 1
+                        meal_count = ?
                     WHERE user_id = ? AND date = ?
                 ''', (
                     nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
                     nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
                     nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0),
+                    actual_meal_count,  # 🔧 使用實際計算的餐數
                     user_id, today
                 ))
-                print(f"✅ 更新現有每日營養記錄")
+                print(f"✅ 更新現有每日營養記錄，餐數設為：{actual_meal_count}")
             else:
-                # 插入新記錄
+                # 🔧 修正：插入新記錄，餐數設為實際計算值
                 cursor.execute('''
                     INSERT INTO daily_nutrition 
                     (user_id, date, total_calories, total_carbs, total_protein, total_fat, 
-                     total_fiber, total_sugar, meal_count)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    total_fiber, total_sugar, meal_count)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     user_id, today,
                     nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
                     nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
-                    nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0)
+                    nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0),
+                    actual_meal_count  # 🔧 使用實際計算的餐數
                 ))
-                print(f"✅ 插入新的每日營養記錄")
+                print(f"✅ 插入新的每日營養記錄，餐數設為：{actual_meal_count}")
             
-            # 🔧 新增：驗證儲存結果
+            # 驗證儲存結果
             cursor.execute('''
                 SELECT total_calories, total_carbs, total_protein, total_fat, meal_count 
                 FROM daily_nutrition WHERE user_id = ? AND date = ?
@@ -778,7 +789,6 @@ def handle_text_message(event):
             # 預設為記錄飲食
             analyze_food_description_with_confirmation(event, message_text)
 
-
 def handle_welcome(event):
     user_id = event.source.user_id
     user = UserManager.get_user(user_id)
@@ -954,6 +964,125 @@ def handle_meal_record_confirmation(event, message_text):
             TextSendMessage(text=reminder_text, quick_reply=quick_reply)
         )
 
+# 🔧 修正3：新增資料庫清理功能，清除異常的重複記錄
+def clean_duplicate_nutrition_records():
+    """清理 daily_nutrition 表中可能的重複記錄"""
+    conn = None
+    try:
+        conn = sqlite3.connect('nutrition_bot.db', timeout=20.0)
+        cursor = conn.cursor()
+        
+        print("🧹 開始清理 daily_nutrition 重複記錄...")
+        
+        # 查找重複記錄
+        cursor.execute('''
+            SELECT user_id, date, COUNT(*) as count 
+            FROM daily_nutrition 
+            GROUP BY user_id, date 
+            HAVING COUNT(*) > 1
+        ''')
+        duplicates = cursor.fetchall()
+        
+        if duplicates:
+            print(f"🔍 發現 {len(duplicates)} 組重複記錄")
+            
+            for user_id, date, count in duplicates:
+                print(f"🔧 清理用戶 {user_id} 在 {date} 的重複記錄 ({count} 筆)")
+                
+                # 保留一筆記錄，刪除其他的
+                cursor.execute('''
+                    DELETE FROM daily_nutrition 
+                    WHERE user_id = ? AND date = ? 
+                    AND id NOT IN (
+                        SELECT MIN(id) FROM daily_nutrition 
+                        WHERE user_id = ? AND date = ?
+                    )
+                ''', (user_id, date, user_id, date))
+                
+                # 重新計算該日的正確餐數
+                cursor.execute('''
+                    SELECT COUNT(*) FROM meal_records 
+                    WHERE user_id = ? AND DATE(recorded_at) = ?
+                ''', (user_id, date))
+                correct_meal_count = cursor.fetchone()[0]
+                
+                # 更新正確的餐數
+                cursor.execute('''
+                    UPDATE daily_nutrition 
+                    SET meal_count = ? 
+                    WHERE user_id = ? AND date = ?
+                ''', (correct_meal_count, user_id, date))
+                
+                print(f"✅ 已修正餐數為：{correct_meal_count}")
+        
+        conn.commit()
+        print("✅ daily_nutrition 清理完成")
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"❌ 清理失敗：{e}")
+    finally:
+        if conn:
+            conn.close()
+
+# 🔧 修正4：新增修正所有用戶今日餐數的函數
+def fix_all_users_meal_count():
+    """修正所有用戶今日的餐數計算"""
+    conn = None
+    try:
+        conn = sqlite3.connect('nutrition_bot.db', timeout=20.0)
+        cursor = conn.cursor()
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        print(f"🔧 開始修正所有用戶 {today} 的餐數...")
+        
+        # 取得所有今日有營養記錄的用戶
+        cursor.execute('''
+            SELECT DISTINCT user_id FROM daily_nutrition 
+            WHERE date = ?
+        ''', (today,))
+        users = cursor.fetchall()
+        
+        for (user_id,) in users:
+            # 計算該用戶今日實際餐數
+            cursor.execute('''
+                SELECT COUNT(*) FROM meal_records 
+                WHERE user_id = ? AND DATE(recorded_at) = ?
+            ''', (user_id, today))
+            actual_count = cursor.fetchone()[0]
+            
+            # 更新正確的餐數
+            cursor.execute('''
+                UPDATE daily_nutrition 
+                SET meal_count = ? 
+                WHERE user_id = ? AND date = ?
+            ''', (actual_count, user_id, today))
+            
+            print(f"✅ 用戶 {user_id} 餐數修正為：{actual_count}")
+        
+        conn.commit()
+        print("✅ 所有用戶餐數修正完成")
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"❌ 餐數修正失敗：{e}")
+    finally:
+        if conn:
+            conn.close()
+
+# 🔧 修正5：在啟動時自動執行清理和修正
+def startup_database_maintenance():
+    """啟動時執行資料庫維護"""
+    print("🚀 執行啟動資料庫維護...")
+    try:
+        clean_duplicate_nutrition_records()
+        fix_all_users_meal_count()
+        print("✅ 資料庫維護完成")
+    except Exception as e:
+        print(f"❌ 資料庫維護失敗：{e}")
+
 
 def show_daily_progress(event):
     """顯示今日營養進度"""
@@ -983,9 +1112,12 @@ def show_daily_progress(event):
         
         # 取得今日所有餐點記錄
         today_meals = get_today_meals(user_id)
+        actual_meal_count = len(today_meals) if today_meals else 0
+
+        print(f"🔍 DEBUG - 今日實際餐數：{actual_meal_count}")
+        print(f"🔍 DEBUG - daily_nutrition 中的餐數：{daily_nutrition[8] if daily_nutrition else 0}")
         
-        if not daily_nutrition:
-            # 🔧 改善：有個人資料但沒記錄時的提示
+        if not daily_nutrition or actual_meal_count == 0:
             quick_reply = QuickReply(items=[
                 QuickReplyButton(action=MessageAction(label="📝 記錄早餐", text="記錄早餐")),
                 QuickReplyButton(action=MessageAction(label="📝 記錄午餐", text="記錄午餐")),
@@ -1002,12 +1134,13 @@ def show_daily_progress(event):
             )
             return
         
-        # 營養數據
+        # 營養數據計算
         current_calories = daily_nutrition[3] or 0
         current_carbs = daily_nutrition[4] or 0
         current_protein = daily_nutrition[5] or 0
         current_fat = daily_nutrition[6] or 0
-        meal_count = daily_nutrition[8] or 0
+        # 🔧 使用實際計算的餐數
+        meal_count = actual_meal_count
         
         # 目標數據
         target_calories = user_data['target_calories']
@@ -1086,7 +1219,7 @@ def show_daily_progress(event):
             progress_text += "\n✅ 很棒！今日營養攝取均衡"
         
         quick_reply = QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="記錄飲食", text="記錄飲食")),
+            QuickReplyButton(action=MessageAction(label="繼續記錄", text="記錄飲食")),
             QuickReplyButton(action=MessageAction(label="飲食建議", text="飲食建議")),
             QuickReplyButton(action=MessageAction(label="週報告", text="週報告"))
         ])
@@ -3878,6 +4011,8 @@ if __name__ == "__main__":
         keep_alive_thread.start()
         start_scheduler()
         check_database_structure()
+        startup_database_maintenance()
+        
         test_nutrition_extraction()
         port = int(os.environ.get('PORT', 5000))
         print(f"啟動20年經驗糖尿病專業營養師機器人在端口 {port}")
