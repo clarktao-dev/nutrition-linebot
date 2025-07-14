@@ -68,105 +68,6 @@ def init_db():
         )
     ''')
     
-    # 添加新欄位到現有表格（如果不存在）
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN body_fat_percentage REAL DEFAULT 0')
-    except sqlite3.OperationalError:
-        pass  # 欄位已存在
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN diabetes_type TEXT')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN target_calories REAL DEFAULT 2000')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN target_carbs REAL DEFAULT 250')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN target_protein REAL DEFAULT 100')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN target_fat REAL DEFAULT 70')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN bmr REAL DEFAULT 1500')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN tdee REAL DEFAULT 2000')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN last_reminder_sent TIMESTAMP')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN last_profile_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN visceral_fat_level INTEGER DEFAULT 0')
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute('ALTER TABLE users ADD COLUMN muscle_mass REAL DEFAULT 0')
-    except sqlite3.OperationalError:
-        pass
-
-    
-    # 飲食記錄表
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS meal_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT,
-            meal_type TEXT,
-            meal_description TEXT,
-            nutrition_analysis TEXT,
-            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (user_id)
-        )
-    ''')
-    # 添加新的營養素欄位（如果不存在）
-    nutrition_columns = [
-        ('calories', 'REAL DEFAULT 0'),
-        ('carbs', 'REAL DEFAULT 0'),
-        ('protein', 'REAL DEFAULT 0'),
-        ('fat', 'REAL DEFAULT 0'),
-        ('fiber', 'REAL DEFAULT 0'),
-        ('sugar', 'REAL DEFAULT 0')
-    ]
-    
-    for column_name, column_type in nutrition_columns:
-        try:
-            cursor.execute(f'ALTER TABLE meal_records ADD COLUMN {column_name} {column_type}')
-            print(f"已添加欄位：{column_name}")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" in str(e):
-                print(f"欄位 {column_name} 已存在")
-            else:
-                print(f"添加欄位 {column_name} 時發生錯誤：{e}")
-    
     # 添加用戶表的新欄位
     user_columns = [
         ('body_fat_percentage', 'REAL DEFAULT 0'),
@@ -183,6 +84,8 @@ def init_db():
         ('visceral_fat_level', 'INTEGER DEFAULT 0'),
         ('muscle_mass', 'REAL DEFAULT 0')
     ]
+
+
     
     for column_name, column_type in user_columns:
         try:
@@ -194,6 +97,39 @@ def init_db():
             else:
                 print(f"添加用戶欄位 {column_name} 時發生錯誤：{e}")
     
+    # 添加新的營養素欄位（如果不存在）
+    nutrition_columns = [
+        ('calories', 'REAL DEFAULT 0'),
+        ('carbs', 'REAL DEFAULT 0'),
+        ('protein', 'REAL DEFAULT 0'),
+        ('fat', 'REAL DEFAULT 0'),
+        ('fiber', 'REAL DEFAULT 0'),
+        ('sugar', 'REAL DEFAULT 0')
+    ]
+
+    for column_name, column_type in nutrition_columns:
+        try:
+            cursor.execute(f'ALTER TABLE meal_records ADD COLUMN {column_name} {column_type}')
+            print(f"已添加欄位：{column_name}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                print(f"欄位 {column_name} 已存在")
+            else:
+                print(f"添加欄位 {column_name} 時發生錯誤：{e}")
+    
+    # 飲食記錄表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS meal_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            meal_type TEXT,
+            meal_description TEXT,
+            nutrition_analysis TEXT,
+            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+    ''')
+
     # 每日營養總結表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_nutrition (
@@ -228,13 +164,13 @@ def init_db():
     conn.commit()
     print("資料庫初始化成功")
     
-except Exception as e:
-    if conn:
-        conn.rollback()
-    print(f"資料庫初始化失敗：{e}")
-finally:
-    if conn:
-        conn.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"資料庫初始化失敗：{e}")
+    finally:
+        if conn:
+            conn.close()
 
 # 初始化資料庫
 init_db()
