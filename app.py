@@ -1832,22 +1832,21 @@ def provide_meal_suggestions(event, user_message=""):
         food_preferences = UserManager.get_food_preferences(user_id)
         
         # 安全地處理用戶資料，避免 None 值和索引錯誤
-        try:
-            user_data = get_user_data(user)
-            name = user_data['name']
-            age = user_data['age']
-            gender = user_data['gender']
-            height = user_data['height']
-            weight = user_data['weight']
-            activity = user_data['activity_level']
-            goals = user_data['health_goals']
-            restrictions = user_data['dietary_restrictions']
-            body_fat = user_data['body_fat_percentage']
-            diabetes = user_data['diabetes_type']
-            target_cal = user_data['target_calories']
-            target_carbs = user_data['target_carbs']
-            target_protein = user_data['target_protein']
-            target_fat = user_data['target_fat']
+        user_data = get_user_data(user)
+        name = user_data['name']
+        age = user_data['age']
+        gender = user_data['gender']
+        height = user_data['height']
+        weight = user_data['weight']
+        activity = user_data['activity_level']
+        goals = user_data['health_goals']
+        restrictions = user_data['dietary_restrictions']
+        body_fat = user_data['body_fat_percentage']
+        diabetes = user_data['diabetes_type']
+        target_cal = user_data['target_calories']
+        target_carbs = user_data['target_carbs']
+        target_protein = user_data['target_protein']
+        target_fat = user_data['target_fat']
         
         # 安全地格式化字串
         diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
@@ -2494,9 +2493,9 @@ def generate_weekly_report(event):
 
 def show_user_profile(event):
     user_id = event.source.user_id
-    user_data = get_user_data(user)  # 添加這行
+    user_data = get_user_data(user_id)  # 添加這行
     
-    if not user:
+    if not user_data:
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="你還沒有設定個人資料。請先點選「設定個人資料」。")
