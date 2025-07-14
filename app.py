@@ -35,7 +35,7 @@ user_states = {}
 
 # 資料庫初始化
 def init_db():
-    conn = sqlite3.connect('nutrition_bot.db', timeout=２0.0)
+    conn = sqlite3.connect('nutrition_bot.db', timeout=20.0)
     cursor = conn.cursor()
     
     # 用戶資料表
@@ -238,6 +238,40 @@ finally:
 
 # 初始化資料庫
 init_db()
+
+def get_user_data(user):
+    """安全地從用戶資料中提取所需資訊"""
+    if not user:
+        return None
+    
+    return {
+        'user_id': user[0],
+        'name': user[1] if len(user) > 1 else "用戶",
+        'age': user[2] if len(user) > 2 else 30,
+        'gender': user[3] if len(user) > 3 else "未設定",
+        'height': user[4] if len(user) > 4 else 170,
+        'weight': user[5] if len(user) > 5 else 70,
+        'activity_level': user[6] if len(user) > 6 else "中等活動量",
+        'health_goals': user[7] if len(user) > 7 else "維持健康",
+        'dietary_restrictions': user[8] if len(user) > 8 else "無",
+        'created_at': user[9] if len(user) > 9 else None,
+        'updated_at': user[10] if len(user) > 10 else None,
+        'body_fat_percentage': user[11] if len(user) > 11 else 20.0,
+        'diabetes_type': user[12] if len(user) > 12 else None,
+        'target_calories': user[13] if len(user) > 13 else 2000.0,
+        'target_carbs': user[14] if len(user) > 14 else 250.0,
+        'target_protein': user[15] if len(user) > 15 else 100.0,
+        'target_fat': user[16] if len(user) > 16 else 70.0,
+        'bmr': user[17] if len(user) > 17 else 1500.0,
+        'tdee': user[18] if len(user) > 18 else 2000.0,
+        'last_active': user[19] if len(user) > 19 else None,
+        'last_reminder_sent': user[20] if len(user) > 20 else None,
+        'last_profile_update': user[21] if len(user) > 21 else None,
+        'visceral_fat_level': user[22] if len(user) > 22 else 0,
+        'muscle_mass': user[23] if len(user) > 23 else 0
+    }
+
+
 
 class UserManager:
     @staticmethod
@@ -730,7 +764,8 @@ def handle_welcome(event):
     user = UserManager.get_user(user_id)
     
     if user:
-        name = user[1] if user[1] else "朋友"
+        user_data = get_user_data(user)
+        name = user_data['name'] if user_data['name'] else "朋友"
         welcome_text = f"""👋 歡迎回來，{name}！
 
 我是你的專屬AI營養師，可以：
@@ -787,21 +822,20 @@ def provide_meal_suggestions(event, user_message=""):
         food_preferences = UserManager.get_food_preferences(user_id)
         
         # 安全地取得用戶資料，避免 None 值和格式化錯誤
-        def safe_get(value, default=0):
-            return value if value is not None else default
-        
-        diabetes_context = f"糖尿病類型：{user[12]}" if user[12] else "無糖尿病"
-        
+        # ✅ 修正後
+        user_data = get_user_data(user)
+        diabetes_context = f"糖尿病類型：{user_data['diabetes_type']}" if user_data['diabetes_type'] else "無糖尿病"
+
         user_context = f"""
-用戶資料：{user[1]}，{user[2]}歲，{user[3]}
-身高：{user[4]}cm，體重：{user[5]}kg，體脂率：{safe_get(user[11], 0):.1f}%
-活動量：{user[6]}
-健康目標：{user[7]}
-飲食限制：{user[8]}
+用戶資料：{user_data['name']}，{user_data['age']}歲，{user_data['gender']}
+身高：{user_data['height']}cm，體重：{user_data['weight']}kg，體脂率：{user_data['body_fat_percentage']:.1f}%
+活動量：{user_data['activity_level']}
+健康目標：{user_data['health_goals']}
+飲食限制：{user_data['dietary_restrictions']}
 {diabetes_context}
 
 每日營養目標：
-熱量：{safe_get(user[13], 2000):.0f}大卡，碳水：{safe_get(user[14], 250):.0f}g，蛋白質：{safe_get(user[15], 100):.0f}g，脂肪：{safe_get(user[16], 70):.0f}g
+熱量：{user_data['target_calories']:.0f}大卡，碳水：{user_data['target_carbs']:.0f}g，蛋白質：{user_data['target_protein']:.0f}g，脂肪：{user_data['target_fat']:.0f}g
 
 最近3天飲食：
 {chr(10).join([f"- {meal[0]}" for meal in recent_meals[:5]])}
@@ -818,7 +852,7 @@ def provide_meal_suggestions(event, user_message=""):
 
 重要要求：
 1. 每個食物都必須提供明確的份量指示
-2. 使用純文字格式，不要使用任何 Markdown 符號（如 #、*、**、- 等）
+2. 使用純文字格式，不要使用任何 Markdown 符號（如 #、*、、- 等）
 3. 使用表情符號和空行來區分段落
 
 份量表達方式：
@@ -868,7 +902,7 @@ def provide_meal_suggestions(event, user_message=""):
 
 💡 選擇理由：低脂高蛋白，適合減重目標
 
-請用純文字格式回應，不要使用 # * ** - 等符號，多用表情符號和空行讓內容清晰易讀。
+請用純文字格式回應，不要使用 # *  - 等符號，多用表情符號和空行讓內容清晰易讀。
 """
         
         # 使用 OpenAI 生成建議
@@ -918,12 +952,15 @@ def provide_food_consultation(event, user_question):
         
         # 準備用戶背景資訊
         if user:
+            user_data = get_user_data(user)
+            diabetes_context = f"糖尿病類型：{user_data['diabetes_type']}" if user_data['diabetes_type'] else "無糖尿病"
             user_context = f"""
-用戶資料：{user[1]}，{user[2]}歲，{user[3]}
-身高：{user[4]}cm，體重：{user[5]}kg
-活動量：{user[6]}
-健康目標：{user[7]}
-飲食限制：{user[8]}
+用戶資料：{user_data['name']}，{user_data['age']}歲，{user_data['gender']}
+身高：{user_data['height']}cm，體重：{user_data['weight']}kg，體脂率：{user_data['body_fat_percentage']:.1f}%
+活動量：{user_data['activity_level']}
+健康目標：{user_data['health_goals']}
+飲食限制：{user_data['dietary_restrictions']}
+{diabetes_context}
 """
         else:
             user_context = "用戶未設定個人資料，請提供一般性建議。"
@@ -971,7 +1008,7 @@ def provide_food_consultation(event, user_question):
 
 🩺 糖尿病注意：香蕉GI值中等，建議搭配堅果一起吃可緩解血糖上升
 
-請用純文字格式，多用表情符號，不要使用 # * ** 等符號。
+請用純文字格式，多用表情符號，不要使用 # *  等符號。
 """
         
         # 使用 OpenAI 分析
@@ -1015,17 +1052,17 @@ def generate_basic_meal_suggestions(user, recent_meals, food_preferences):
     
     suggestions = f"""根據你的健康目標「{health_goal}」，推薦以下餐點：
 
-🥗 **均衡餐點建議**：
+🥗 均衡餐點建議：
 • 糙米飯 + 蒸魚 + 炒青菜
 • 雞胸肉沙拉 + 全麥麵包
 • 豆腐味噌湯 + 烤蔬菜
 
-🍎 **健康點心**：
+🍎 健康點心：
 • 堅果優格
 • 水果拼盤
 • 無糖豆漿
 
-💡 **注意事項**：
+💡 注意事項：
 • 飲食限制：{restrictions}
 • 建議少油少鹽
 • 多攝取蔬果和蛋白質
@@ -1039,17 +1076,17 @@ def generate_basic_food_consultation(question, user):
     
     consultation = f"""關於你的問題「{question}」：
 
-💡 **一般建議**：
+💡 一般建議：
 • 任何食物都要適量攝取
 • 注意個人健康狀況
 • 均衡飲食最重要
 
-📋 **建議做法**：
+📋 建議做法：
 • 如有特殊疾病，請諮詢醫師
 • 注意份量控制
 • 選擇天然原型食物
 
-⚠️ **特別提醒**：
+⚠️ 特別提醒：
 詳細營養諮詢功能暫時無法使用，建議諮詢專業營養師或醫師獲得個人化建議。"""
     
     return consultation
@@ -1346,19 +1383,21 @@ def show_user_profile(event):
         )
         return
     
-    bmi = user[5] / ((user[4] / 100) ** 2)
-    
+    user_data = get_user_data(user)
+    bmi = user_data['weight'] / ((user_data['height'] / 100) ** 2)
+
     profile_text = f"""👤 你的個人資料：
 
-• 姓名：{user[1]}
-• 年齡：{user[2]} 歲  
-• 性別：{user[3]}
-• 身高：{user[4]} cm
-• 體重：{user[5]} kg
-• BMI：{bmi:.1f}
-• 活動量：{user[6]}
-• 健康目標：{user[7]}
-• 飲食限制：{user[8]}
+- 姓名：{user_data['name']}
+- 年齡：{user_data['age']} 歲  
+- 性別：{user_data['gender']}
+- 身高：{user_data['height']} cm
+- 體重：{user_data['weight']} kg
+- 體脂率：{user_data['body_fat_percentage']:.1f}%
+- BMI：{bmi:.1f}
+- 活動量：{user_data['activity_level']}
+- 健康目標：{user_data['health_goals']}
+- 飲食限制：{user_data['dietary_restrictions']}
 
 💡 想要更新資料，請點選「設定個人資料」重新設定。"""
     
@@ -1521,28 +1560,28 @@ def generate_detailed_meal_suggestions(user, recent_meals, food_preferences):
     
     suggestions = f"""根據你的健康目標「{health_goal}」，推薦以下餐點：
 
-🥗 **均衡餐點建議**（含精確份量）：
+🥗 均衡餐點建議（含精確份量）：
 
-**選項1：蒸魚餐**
-• 糙米飯：1碗 = 1拳頭大 = 約180g = 約220大卡
-• 蒸鮭魚：1片 = 手掌大厚度 = 約120g = 約180大卡  
-• 炒青菜：1份 = 煮熟後100g = 約30大卡
-• 橄欖油：1茶匙 = 5ml = 約45大卡
-**總熱量：約475大卡**
+🍽️ 選項1：蒸魚餐
+- 糙米飯：1碗 = 1拳頭大 = 約180g = 約220大卡
+- 蒸鮭魚：1片 = 手掌大厚度 = 約120g = 約180大卡  
+- 炒青菜：1份 = 煮熟後100g = 約30大卡
+- 橄欖油：1茶匙 = 5ml = 約45大卡
+📊 總熱量：約475大卡
 
-**選項2：雞胸肉沙拉**
-• 雞胸肉：1份 = 手掌大 = 約100g = 約165大卡
-• 生菜沙拉：2碗 = 約200g = 約30大卡
-• 全麥麵包：1片 = 約30g = 約80大卡
-• 堅果：1湯匙 = 約15g = 約90大卡
-**總熱量：約365大卡**
+🍽️ 選項2：雞胸肉沙拉
+- 雞胸肉：1份 = 手掌大 = 約100g = 約165大卡
+- 生菜沙拉：2碗 = 約200g = 約30大卡
+- 全麥麵包：1片 = 約30g = 約80大卡
+- 堅果：1湯匙 = 約15g = 約90大卡
+📊 總熱量：約365大卡
 
-💡 **份量調整原則**：
+💡 份量調整原則：
 • 減重：減少主食至半碗（90g）
 • 增重：增加蛋白質至1.5份（150g）
 • 控糖：選擇低GI主食，控制在100g以內
 
-⚠️ **飲食限制考量**：{restrictions}
+⚠️ 飲食限制考量：{restrictions}
 
 詳細營養分析功能暫時無法使用，以上為精確份量建議。"""
     
@@ -1554,25 +1593,25 @@ def generate_detailed_food_consultation(question, user):
     
     consultation = f"""關於你的問題「{question}」：
 
-💡 **一般建議與份量指示**：
+💡 一般建議與份量指示：
 
-🔸 **基本原則**：
+🔸 基本原則：
 • 任何食物都要適量攝取
 • 注意個人健康狀況
 • 均衡飲食最重要
 
-🔸 **常見食物份量參考**：
+🔸 常見食物份量參考：
 • 水果：1份 = 1個拳頭大 = 約150g
 • 堅果：1份 = 1湯匙 = 約30g  
 • 全穀物：1份 = 1拳頭 = 約150-200g
 • 蛋白質：1份 = 1手掌厚度 = 約100-120g
 
-⚠️ **特別提醒**：
+⚠️ 特別提醒：
 • 如有特殊疾病，請諮詢醫師
 • 注意個人過敏原
 • 逐漸調整份量，避免突然改變
 
-📋 **建議做法**：
+📋 建議做法：
 • 使用食物秤確認重量
 • 學會視覺估量
 • 記錄飲食反應
@@ -1687,16 +1726,23 @@ def generate_weekly_report(event):
             for meal in meals[:3]:  # 只顯示前3個
                 meals_summary += f"- {meal}\n"
         
-        user_context = f"""
-用戶資料：{user[1]}，{user[2]}歲，{user[3]}
-身高：{user[4]}cm，體重：{user[5]}kg
-活動量：{user[6]}
-健康目標：{user[7]}
-飲食限制：{user[8]}
+        user_data = get_user_data(user)
+        diabetes_context = f"糖尿病類型：{user_data['diabetes_type']}" if user_data['diabetes_type'] else "無糖尿病"
 
-本週飲食記錄（共{len(weekly_meals)}餐）：
+        user_context = f"""
+用戶資料：{user_data['name']}，{user_data['age']}歲，{user_data['gender']}
+身高：{user_data['height']}cm，體重：{user_data['weight']}kg
+活動量：{user_data['activity_level']}
+健康目標：{user_data['health_goals']}
+飲食限制：{user_data['dietary_restrictions']}
+{diabetes_context}
+
+記錄期間：{record_days}天（共{total_meals}餐）
+餐型分佈：{dict(meal_counts)}
+
+詳細飲食記錄：
 {meals_summary}
-"""
+""" 
         
         report_prompt = """
 作為專業營養師，請為用戶生成本週營養分析報告：
@@ -1735,7 +1781,7 @@ def generate_weekly_report(event):
 記錄天數：{len(set(meal[3][:10] for meal in weekly_meals))} 天
 總餐數：{len(weekly_meals)} 餐
 
-🎯 **飲食記錄統計**：
+🎯 飲食記錄統計：
 """
         
         # 統計餐型分佈
@@ -1748,7 +1794,7 @@ def generate_weekly_report(event):
             final_report += f"• {meal_type}：{count} 次\n"
         
         final_report += f"""
-💡 **一般建議**：
+💡 一般建議：
 • 保持規律的三餐時間
 • 增加蔬果攝取
 • 注意營養均衡
@@ -1764,24 +1810,24 @@ def generate_weekly_report(event):
 def show_instructions(event):
     instructions = """📋 使用說明
 
-🔹 **主要功能**：
-📝 **記錄飲食**：「早餐吃了蛋餅加豆漿」
-🍽️ **飲食建議**：「今天晚餐吃什麼？」
-❓ **食物諮詢**：「糖尿病可以吃水果嗎？」
-📊 **週報告**：追蹤營養趨勢
+🔹 主要功能：
+📝 記錄飲食：「早餐吃了蛋餅加豆漿」
+🍽️ 飲食建議：「今天晚餐吃什麼？」
+❓ 食物諮詢：「糖尿病可以吃水果嗎？」
+📊 週報告：追蹤營養趨勢
 
-🔹 **智慧對話範例**：
+🔹 智慧對話範例：
 • 「不知道要吃什麼」→ 推薦適合餐點
 • 「香蕉適合我嗎？」→ 個人化食物建議
 • 「這個份量OK嗎？」→ 份量調整建議
 
-🔹 **個人化功能**：
+🔹 個人化功能：
 ✓ 記住你的身體資料
 ✓ 根據健康目標建議
 ✓ 避免你的飲食禁忌
 ✓ 學習你的飲食偏好
 
-💡 **小技巧**：
+💡 小技巧：
 越詳細的描述，越準確的建議！"""
     
     quick_reply = QuickReply(items=[
@@ -1802,12 +1848,12 @@ def handle_image_message(event):
 
 為了提供更準確的分析，請用文字描述你的食物：
 
-💬 **描述範例**：
+💬 描述範例：
 • 「白飯一碗 + 紅燒豬肉 + 青菜」
 • 「雞腿便當，有滷蛋和高麗菜」
 • 「拿鐵咖啡中杯 + 全麥吐司」
 
-🤖 **或者你可以問我**：
+🤖 或者你可以問我：
 • 「這個便當適合減重嗎？」
 • 「推薦健康的午餐」
 • 「糖尿病可以吃什麼？」
@@ -1849,31 +1895,21 @@ def provide_meal_suggestions(event, user_message=""):
         
         # 安全地處理用戶資料，避免 None 值和索引錯誤
         try:
-            name = user[1] if len(user) > 1 and user[1] else "用戶"
-            age = user[2] if len(user) > 2 and user[2] else 30
-            gender = user[3] if len(user) > 3 and user[3] else "未設定"
-            height = user[4] if len(user) > 4 and user[4] else 170
-            weight = user[5] if len(user) > 5 and user[5] else 70
-            activity = user[6] if len(user) > 6 and user[6] else "中等活動量"
-            goals = user[7] if len(user) > 7 and user[7] else "維持健康"
-            restrictions = user[8] if len(user) > 8 and user[8] else "無"
-            
-            # 新欄位可能不存在，需要安全處理
-            body_fat = user[11] if len(user) > 11 and user[11] else 20.0
-            diabetes = user[12] if len(user) > 12 and user[12] else None
-            target_cal = user[13] if len(user) > 13 and user[13] else 2000.0
-            target_carbs = user[14] if len(user) > 14 and user[14] else 250.0
-            target_protein = user[15] if len(user) > 15 and user[15] else 100.0
-            target_fat = user[16] if len(user) > 16 and user[16] else 70.0
-            
-        except (IndexError, TypeError):
-            # 如果發生任何錯誤，使用預設值
-            name, age, gender = "用戶", 30, "未設定"
-            height, weight = 170, 70
-            activity, goals, restrictions = "中等活動量", "維持健康", "無"
-            body_fat = 20.0
-            diabetes = None
-            target_cal, target_carbs, target_protein, target_fat = 2000.0, 250.0, 100.0, 70.0
+            user_data = get_user_data(user)
+            name = user_data['name']
+            age = user_data['age']
+            gender = user_data['gender']
+            height = user_data['height']
+            weight = user_data['weight']
+            activity = user_data['activity_level']
+            goals = user_data['health_goals']
+            restrictions = user_data['dietary_restrictions']
+            body_fat = user_data['body_fat_percentage']
+            diabetes = user_data['diabetes_type']
+            target_cal = user_data['target_calories']
+            target_carbs = user_data['target_carbs']
+            target_protein = user_data['target_protein']
+            target_fat = user_data['target_fat']
         
         # 安全地格式化字串
         diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
@@ -1974,26 +2010,17 @@ def provide_food_consultation(event, user_question):
         # 準備用戶背景資訊 - 安全處理資料
         if user:
             try:
-                name = user[1] if len(user) > 1 and user[1] else "用戶"
-                age = user[2] if len(user) > 2 and user[2] else 30
-                gender = user[3] if len(user) > 3 and user[3] else "未設定"
-                height = user[4] if len(user) > 4 and user[4] else 170
-                weight = user[5] if len(user) > 5 and user[5] else 70
-                activity = user[6] if len(user) > 6 and user[6] else "中等活動量"
-                goals = user[7] if len(user) > 7 and user[7] else "維持健康"
-                restrictions = user[8] if len(user) > 8 and user[8] else "無"
-                
-                # 新欄位可能不存在，需要安全處理
-                body_fat = user[11] if len(user) > 11 and user[11] else 20.0
-                diabetes = user[12] if len(user) > 12 and user[12] else None
-                
-            except (IndexError, TypeError):
-                # 如果發生任何錯誤，使用預設值
-                name, age, gender = "用戶", 30, "未設定"
-                height, weight = 170, 70
-                activity, goals, restrictions = "中等活動量", "維持健康", "無"
-                body_fat = 20.0
-                diabetes = None
+                user_data = get_user_data(user)
+                name = user_data['name']
+                age = user_data['age']
+                gender = user_data['gender']
+                height = user_data['height']
+                weight = user_data['weight']
+                activity = user_data['activity_level']
+                goals = user_data['health_goals']
+                restrictions = user_data['dietary_restrictions']
+                body_fat = user_data['body_fat_percentage']
+                diabetes = user_data['diabetes_type']
             
             diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
             user_context = f"""
@@ -2013,16 +2040,16 @@ def provide_food_consultation(event, user_question):
 
 {user_context}
 
-**重要要求：如果涉及份量建議，必須提供明確的份量指示**
+重要要求：如果涉及份量建議，必須提供明確的份量指示
 
 請使用以下份量參考：
-🍚 **主食**: 1碗飯 = 1拳頭 = 150-200g
-🥩 **蛋白質**: 1份肉類 = 1手掌大小厚度 = 100-120g  
-🥬 **蔬菜**: 1份 = 煮熟後100g = 生菜200g
-🥜 **堅果**: 1份 = 30g = 約1湯匙
-🥛 **飲品**: 1杯 = 250ml
+🍚 主食: 1碗飯 = 1拳頭 = 150-200g
+🥩 蛋白質: 1份肉類 = 1手掌大小厚度 = 100-120g  
+🥬 蔬菜: 1份 = 煮熟後100g = 生菜200g
+🥜 堅果: 1份 = 30g = 約1湯匙
+🥛 飲品: 1杯 = 250ml
 
-**糖尿病患者特別考量**：
+糖尿病患者特別考量：
 - 重點關注血糖影響
 - 提供GI值參考
 - 建議適合的食用時間
@@ -2031,7 +2058,7 @@ def provide_food_consultation(event, user_question):
 請提供：
 1. 直接回答用戶的問題（可以吃/不建議/適量等）
 2. 說明原因（營養成分、健康影響）  
-3. **如果可以吃，明確建議份量**：
+3. 如果可以吃，明確建議份量：
    - 具體重量（克數）
    - 視覺比對（拳頭/手掌/湯匙等）
    - 建議頻率（每天/每週幾次）
@@ -2091,31 +2118,21 @@ def analyze_food_description(event, food_description):
         # 建立個人化提示 - 安全處理資料
         if user:
             try:
-                name = user[1] if len(user) > 1 and user[1] else "用戶"
-                age = user[2] if len(user) > 2 and user[2] else 30
-                gender = user[3] if len(user) > 3 and user[3] else "未設定"
-                height = user[4] if len(user) > 4 and user[4] else 170
-                weight = user[5] if len(user) > 5 and user[5] else 70
-                activity = user[6] if len(user) > 6 and user[6] else "中等活動量"
-                goals = user[7] if len(user) > 7 and user[7] else "維持健康"
-                restrictions = user[8] if len(user) > 8 and user[8] else "無"
-                
-                # 新欄位可能不存在，需要安全處理
-                body_fat = user[11] if len(user) > 11 and user[11] else 20.0
-                diabetes = user[12] if len(user) > 12 and user[12] else None
-                target_cal = user[13] if len(user) > 13 and user[13] else 2000.0
-                target_carbs = user[14] if len(user) > 14 and user[14] else 250.0
-                target_protein = user[15] if len(user) > 15 and user[15] else 100.0
-                target_fat = user[16] if len(user) > 16 and user[16] else 70.0
-                
-            except (IndexError, TypeError):
-                # 如果發生任何錯誤，使用預設值
-                name, age, gender = "用戶", 30, "未設定"
-                height, weight = 170, 70
-                activity, goals, restrictions = "中等活動量", "維持健康", "無"
-                body_fat = 20.0
-                diabetes = None
-                target_cal, target_carbs, target_protein, target_fat = 2000.0, 250.0, 100.0, 70.0
+                user_data = get_user_data(user)
+                name = user_data['name']
+                age = user_data['age']
+                gender = user_data['gender']
+                height = user_data['height']
+                weight = user_data['weight']
+                activity = user_data['activity_level']
+                goals = user_data['health_goals']
+                restrictions = user_data['dietary_restrictions']
+                body_fat = user_data['body_fat_percentage']
+                diabetes = user_data['diabetes_type']
+                target_cal = user_data['target_calories']
+                target_carbs = user_data['target_carbs']
+                target_protein = user_data['target_protein']
+                target_fat = user_data['target_fat']    
             
             diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
             user_context = f"""
@@ -2143,7 +2160,7 @@ def analyze_food_description(event, food_description):
 1. 只分析用戶實際描述的食物，不要添加或建議其他餐點
 2. 不要假設用戶一天吃三餐，只分析這一餐
 3. 基於實際攝取提供建議，不要補足未吃的餐點
-4. 使用純文字格式，多用表情符號，不要使用 # * ** 等符號
+4. 使用純文字格式，多用表情符號，不要使用 # *  等符號
 
 份量參考標準：
 🍚 主食: 1碗 = 1拳頭大 = 150-200g = 200-250大卡
@@ -2311,14 +2328,15 @@ def get_daily_progress_summary(user_id):
     if not user or not daily_nutrition:
         return ""
     
+    user_data = get_user_data(user)
     current_calories = daily_nutrition[3] or 0
-    target_calories = user[13] or 0
+    target_calories = user_data['target_calories']
     
     remaining_calories = max(0, target_calories - current_calories)
     progress_percent = (current_calories / target_calories * 100) if target_calories > 0 else 0
     
     return f"""
-📊 **今日進度更新**：
+📊 今日進度更新：
 目前攝取：{current_calories:.0f} / {target_calories:.0f} 大卡 ({progress_percent:.0f}%)
 還需要：{remaining_calories:.0f} 大卡
 
@@ -2383,20 +2401,16 @@ def generate_weekly_report(event):
         
         # 安全取得用戶資料
         try:
-            name = user[1] if len(user) > 1 and user[1] else "用戶"
-            age = user[2] if len(user) > 2 and user[2] else 30
-            gender = user[3] if len(user) > 3 and user[3] else "未設定"
-            height = user[4] if len(user) > 4 and user[4] else 170
-            weight = user[5] if len(user) > 5 and user[5] else 70
-            activity = user[6] if len(user) > 6 and user[6] else "中等活動量"
-            goals = user[7] if len(user) > 7 and user[7] else "維持健康"
-            restrictions = user[8] if len(user) > 8 and user[8] else "無"
-            diabetes = user[12] if len(user) > 12 and user[12] else None
-        except (IndexError, TypeError):
-            name, age, gender = "用戶", 30, "未設定"
-            height, weight = 170, 70
-            activity, goals, restrictions = "中等活動量", "維持健康", "無"
-            diabetes = None
+            user_data = get_user_data(user)
+            name = user_data['name']
+            age = user_data['age']
+            gender = user_data['gender']
+            height = user_data['height']
+            weight = user_data['weight']
+            activity = user_data['activity_level']
+            goals = user_data['health_goals']
+            restrictions = user_data['dietary_restrictions']
+            diabetes = user_data['diabetes_type']
         
         diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
         
@@ -2421,7 +2435,7 @@ def generate_weekly_report(event):
 重要原則：
 1. 基於實際記錄天數分析，不需要7天才能分析
 2. 使用純文字格式，多用表情符號
-3. 不要使用 # * ** 等符號
+3. 不要使用 # *  等符號
 
 請提供：
 
@@ -2542,7 +2556,7 @@ def generate_weekly_report(event):
 
 def show_user_profile(event):
     user_id = event.source.user_id
-    user = UserManager.get_user(user_id)
+    user_data = get_user_data(user)  # 添加這行
     
     if not user:
         line_bot_api.reply_message(
@@ -2551,32 +2565,32 @@ def show_user_profile(event):
         )
         return
     
-    bmi = user[5] / ((user[4] / 100) ** 2)
-    body_fat = user[6] or 0
+    bmi = user_data['weight'] / ((user_data['height'] / 100) ** 2)
+    body_fat = user_data['body_fat_percentage']
     
     profile_text = f"""👤 你的個人資料：
 
-• 姓名：{user[1]}
-• 年齡：{user[2]} 歲  
-• 性別：{user[3]}
-• 身高：{user[4]} cm
-• 體重：{user[5]} kg
-• 體脂率：{body_fat:.1f}%
-• BMI：{bmi:.1f}
-• 活動量：{user[9]}
-• 健康目標：{user[10]}
-• 飲食限制：{user[11]}"""
+- 姓名：{user_data['name']}
+- 年齡：{user_data['age']} 歲  
+- 性別：{user_data['gender']}
+- 身高：{user_data['height']} cm
+- 體重：{user_data['weight']} kg
+- 體脂率：{user_data['body_fat_percentage']:.1f}%
+- BMI：{bmi:.1f}
+- 活動量：{user_data['activity_level']}
+- 健康目標：{user_data['health_goals']}
+- 飲食限制：{user_data['dietary_restrictions']}"""
     
-    if user[12]:
-        profile_text += f"\n• 糖尿病類型：{user[12]}"
+    if user_data['diabetes_type']:
+        profile_text += f"\n• 糖尿病類型：{user_data['diabetes_type']}"
     
     profile_text += f"""
 
 🎯 每日營養目標：
-• 熱量：{user[13]:.0f} 大卡
-• 碳水：{user[14]:.0f} g
-• 蛋白質：{user[15]:.0f} g
-• 脂肪：{user[16]:.0f} g
+- 熱量：{user_data['target_calories']:.0f} 大卡
+- 碳水：{user_data['target_carbs']:.0f} g
+- 蛋白質：{user_data['target_protein']:.0f} g
+- 脂肪：{user_data['target_fat']:.0f} g
 
 💡 想要更新資料，請點選「更新個人資料」。"""
     
@@ -2593,40 +2607,40 @@ def show_user_profile(event):
 def show_instructions(event):
     instructions = """📋 使用說明
 
-🏥 **我是20年經驗營養師，特別專精糖尿病醣類控制**
+🏥 我是20年經驗營養師，特別專精糖尿病醣類控制
 
-🔹 **主要功能**：
-📝 **記錄飲食**：「早餐吃了蛋餅加豆漿」
-🍽️ **飲食建議**：「今天晚餐吃什麼？」
-❓ **食物諮詢**：「糖尿病可以吃水果嗎？」
-📊 **營養追蹤**：即時顯示今日進度
-📈 **週報告**：追蹤營養趨勢
+🔹 主要功能：
+📝 記錄飲食：「早餐吃了蛋餅加豆漿」
+🍽️ 飲食建議：「今天晚餐吃什麼？」
+❓ 食物諮詢：「糖尿病可以吃水果嗎？」
+📊 營養追蹤：即時顯示今日進度
+📈 週報告：追蹤營養趨勢
 
-🔹 **智慧對話範例**：
+🔹 智慧對話範例：
 • 「不知道要吃什麼」→ 推薦適合餐點
 • 「香蕉適合我嗎？」→ 個人化食物建議
 • 「這個份量OK嗎？」→ 份量調整建議
 • 「血糖高能吃什麼？」→ 糖尿病專業建議
 
-🔹 **體脂率精準計算**：
+🔹 體脂率精準計算：
 ✓ 智能估算或實測輸入
 ✓ Katch-McArdle 公式計算代謝
 ✓ 個人化營養目標制定
 
-🔹 **糖尿病專業功能**：
+🔹 糖尿病專業功能：
 🩺 醣類攝取精確控制
 📉 血糖影響評估
 🍽️ 低GI食物推薦
 ⏰ 用餐時機建議
 
-🔹 **個人化功能**：
+🔹 個人化功能：
 ✓ 記住你的身體資料和體脂率
 ✓ 根據健康目標精準建議
 ✓ 避免你的飲食禁忌
 ✓ 學習你的飲食偏好
 ✓ 主動關心提醒
 
-💡 **小技巧**：
+💡 小技巧：
 越詳細的描述，越準確的建議！"""
     
     quick_reply = QuickReply(items=[
@@ -2647,16 +2661,16 @@ def handle_image_message(event):
 
 為了提供更準確的分析，請用文字描述你的食物：
 
-💬 **描述範例**：
+💬 描述範例：
 • 「白飯一碗 + 紅燒豬肉 + 青菜」
 • 「雞腿便當，有滷蛋和高麗菜」
 • 「拿鐵咖啡中杯 + 全麥吐司」
 
-🩺 **糖尿病患者特別注意**：
+🩺 糖尿病患者特別注意：
 • 「糙米飯半碗 + 蒸魚一片」
 • 「燕麥粥一碗，無糖」
 
-🤖 **或者你可以問我**：
+🤖 或者你可以問我：
 • 「這個便當適合糖尿病患者嗎？」
 • 「推薦低GI的午餐」
 • 「血糖高可以吃什麼？」
@@ -2692,48 +2706,49 @@ def determine_meal_type(description):
 def generate_detailed_meal_suggestions(user, recent_meals, food_preferences):
     """API 不可用時的詳細餐點建議"""
     
-    health_goal = user[10] if user[10] else "維持健康"
-    restrictions = user[11] if user[11] else "無"
-    diabetes_type = user[12] if user[12] else None
-    
+    user_data = get_user_data(user)
+    health_goal = user_data['health_goals']
+    restrictions = user_data['dietary_restrictions']
+    diabetes_type = user_data['diabetes_type']
+
     suggestions = f"""根據你的健康目標「{health_goal}」，推薦以下餐點：
 
-🥗 **均衡餐點建議**（含精確份量）：
+🥗 均衡餐點建議（含精確份量）：
 
-**選項1：蒸魚餐**
+選項1：蒸魚餐
 • 糙米飯：1碗 = 1拳頭大 = 約180g = 約220大卡
 • 蒸鮭魚：1片 = 手掌大厚度 = 約120g = 約180大卡  
 • 炒青菜：1份 = 煮熟後100g = 約30大卡
 • 橄欖油：1茶匙 = 5ml = 約45大卡
-**總熱量：約475大卡**
+總熱量：約475大卡
 
-**選項2：雞胸肉沙拉**
+選項2：雞胸肉沙拉
 • 雞胸肉：1份 = 手掌大 = 約100g = 約165大卡
 • 生菜沙拉：2碗 = 約200g = 約30大卡
 • 全麥麵包：1片 = 約30g = 約80大卡
 • 堅果：1湯匙 = 約15g = 約90大卡
-**總熱量：約365大卡**"""
+總熱量：約365大卡"""
     
     if diabetes_type:
         suggestions += f"""
 
-🩺 **糖尿病專用餐點**：
+🩺 糖尿病專用餐點：
 
-**選項3：低GI控糖餐**
+選項3：低GI控糖餐
 • 燕麥：1/2碗 = 約50g乾重 = 約180大卡
 • 水煮蛋：2顆 = 約100g = 約140大卡
 • 花椰菜：1份 = 約150g = 約40大卡
 • 酪梨：1/4顆 = 約50g = 約80大卡
-**總熱量：約440大卡，低GI值**"""
+總熱量：約440大卡，低GI值"""
     
     suggestions += f"""
 
-💡 **份量調整原則**：
+💡 份量調整原則：
 • 減重：減少主食至半碗（90g）
 • 增重：增加蛋白質至1.5份（150g）
 • 控糖：選擇低GI主食，控制在100g以內
 
-⚠️ **飲食限制考量**：{restrictions}
+⚠️ 飲食限制考量：{restrictions}
 
 詳細營養分析功能暫時無法使用，以上為精確份量建議。"""
     
@@ -2743,36 +2758,42 @@ def generate_detailed_food_consultation(question, user):
     """API 不可用時的詳細食物諮詢"""
     
     diabetes_note = ""
-    if user and user[12]:
-        diabetes_note = f"\n🩺 **糖尿病患者特別注意**：由於你有{user[12]}，建議特別注意血糖監測。"
+    if user:
+        user_data = get_user_data(user)
+        if user_data['diabetes_type']:
+            diabetes_note = f"\n🩺 糖尿病患者特別注意：由於你有{user_data['diabetes_type']}，建議特別注意血糖監測。"
+        else:
+            diabetes_note = ""
+    else:
+        diabetes_note = ""
     
     consultation = f"""關於你的問題「{question}」：
 
-💡 **一般建議與份量指示**：
+💡 一般建議與份量指示：
 
-🔸 **基本原則**：
+🔸 基本原則：
 • 任何食物都要適量攝取
 • 注意個人健康狀況
 • 均衡飲食最重要
 • 糖尿病患者特別注意醣類控制
 
-🔸 **常見食物份量參考**：
+🔸 常見食物份量參考：
 • 水果：1份 = 1個拳頭大 = 約150g
 • 堅果：1份 = 1湯匙 = 約30g  
 • 全穀物：1份 = 1拳頭 = 約150-200g
 • 蛋白質：1份 = 1手掌厚度 = 約100-120g
 
-🔸 **糖尿病友特別份量建議**：
+🔸 糖尿病友特別份量建議：
 • 水果：每次不超過1份，餐後2小時食用
 • 主食：每餐不超過1碗（150g）
 • 選擇低GI食物優先
 
-⚠️ **特別提醒**：
+⚠️ 特別提醒：
 • 如有特殊疾病，請諮詢醫師
 • 注意個人過敏原
 • 逐漸調整份量，避免突然改變{diabetes_note}
 
-📋 **建議做法**：
+📋 建議做法：
 • 使用食物秤確認重量
 • 學會視覺估量
 • 記錄飲食反應
