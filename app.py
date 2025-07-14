@@ -666,7 +666,12 @@ def handle_text_message(event):
     # 檢查用戶狀態
     if user_id not in user_states:
         user_states[user_id] = {'step': 'normal'}
-    
+
+     # 🔧 新增：處理飲食記錄確認流程
+    if user_states[user_id]['step'] == 'confirm_meal_record':
+        handle_meal_record_confirmation(event, message_text)
+        return
+
     # 處理個人資料設定流程
     if user_states[user_id]['step'] != 'normal':
         handle_profile_setup_flow(event, message_text)
@@ -697,7 +702,7 @@ def handle_text_message(event):
             provide_food_consultation(event, message_text)
         else:
             # 預設為記錄飲食
-            analyze_food_description(event, message_text)
+            analyze_food_description_with_confirmation(event, message_text)
 
 def handle_welcome(event):
     user_id = event.source.user_id
@@ -738,6 +743,94 @@ def handle_welcome(event):
         event.reply_token,
         TextSendMessage(text=welcome_text, quick_reply=quick_reply)
     )
+
+# 🔧 新增：處理飲食記錄確認的函數
+def handle_meal_record_confirmation(event, message_text):
+    """處理飲食記錄確認回應"""
+    user_id = event.source.user_id
+    
+    if message_text == "✅ 正確，請記錄":
+        # 用戶確認記錄，執行實際儲存
+        confirm_data = user_states[user_id]['confirm_data']
+        
+        try:
+            # 儲存飲食記錄
+            UserManager.save_meal_record(
+                user_id, 
+                confirm_data['meal_type'], 
+                confirm_data['food_description'], 
+                confirm_data['analysis_result'], 
+                confirm_data['nutrition_data']
+            )
+            
+            # 清除確認狀態
+            user_states[user_id] = {'step': 'normal'}
+            
+            # 發送成功確認訊息
+            success_text = f"""✅ 飲食記錄已成功儲存！
+
+📝 記錄內容：{confirm_data['food_description']}
+🍽️ 餐型：{confirm_data['meal_type']}
+📊 營養數據已加入今日統計
+
+💡 輸入「今日進度」可查看累計營養攝取"""
+            
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="今日進度", text="今日進度")),
+                QuickReplyButton(action=MessageAction(label="繼續記錄", text="繼續記錄飲食")),
+                QuickReplyButton(action=MessageAction(label="飲食建議", text="飲食建議"))
+            ])
+            
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=success_text, quick_reply=quick_reply)
+            )
+            
+        except Exception as e:
+            # 清除確認狀態
+            user_states[user_id] = {'step': 'normal'}
+            
+            error_message = f"抱歉，儲存記錄時發生錯誤：{str(e)}\n\n請重新輸入你的飲食內容。"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=error_message)
+            )
+    
+    elif message_text == "❌ 錯誤，重新輸入":
+        # 用戶要求重新輸入
+        user_states[user_id] = {'step': 'normal'}
+        
+        retry_text = """🔄 好的，請重新描述你的飲食內容
+
+💬 請詳細描述你吃的食物，例如：
+• 「早餐吃了蛋餅一份加豆漿」
+• 「午餐：雞腿便當，有滷蛋和青菜」
+• 「晚餐：蒸魚、糙米飯、炒青菜」
+
+🎯 提示：越詳細的描述，營養分析越準確！"""
+        
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=retry_text)
+        )
+    
+    else:
+        # 用戶輸入了其他內容，提醒選擇
+        reminder_text = """❓ 請選擇以下選項：
+
+✅ 如果記錄資訊正確，請點選「正確，請記錄」
+❌ 如果需要重新輸入，請點選「錯誤，重新輸入」"""
+        
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="✅ 正確，請記錄", text="✅ 正確，請記錄")),
+            QuickReplyButton(action=MessageAction(label="❌ 錯誤，重新輸入", text="❌ 錯誤，重新輸入"))
+        ])
+        
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reminder_text, quick_reply=quick_reply)
+        )
+
 
 def show_daily_progress(event):
     """顯示今日營養進度"""
@@ -1496,7 +1589,8 @@ def show_user_profile(event):
         TextSendMessage(text=profile_text)
     )
 
-def analyze_food_description(event, food_description):
+def analyze_food_description_with_confirmation(event, food_description):
+    """帶確認流程的飲食分析"""
     user_id = event.source.user_id
     user = UserManager.get_user(user_id)
     
@@ -1547,7 +1641,7 @@ def analyze_food_description(event, food_description):
         else:
             user_context = "用戶未設定個人資料，請提供一般性建議。"
         
-        # 🔧 修正2：改進營養分析 Prompt，加強常見食物識別
+        # 營養分析 Prompt
         nutrition_prompt = f"""
 你是一位擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶實際吃的食物進行分析。
 
@@ -1606,59 +1700,19 @@ def analyze_food_description(event, food_description):
             analysis_result = response.choices[0].message.content
             print(f"🔍 DEBUG - AI分析結果：{analysis_result}")
             
-            # 🔧 修正3：改進營養數據提取，加入合理性檢查
+            # 改進營養數據提取，加入合理性檢查
             nutrition_data = extract_nutrition_from_analysis_with_validation(analysis_result, food_description)
             print(f"🔍 DEBUG - 提取的營養數據：{nutrition_data}")
-            
-            # 🔧 修正4：確保記錄正確的食物描述
-            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result, nutrition_data)
-            
-            # 🔧 修正5：確認訊息使用正確的food_description
-            confirmation_text = f"""
-
-✅ 已記錄你的{meal_type}
-
-📝 記錄內容：{food_description}
-📊 營養數據：
-熱量：{nutrition_data.get('calories', 0):.0f} 大卡
-碳水：{nutrition_data.get('carbs', 0):.1f}g
-蛋白質：{nutrition_data.get('protein', 0):.1f}g
-脂肪：{nutrition_data.get('fat', 0):.1f}g
-
-💡 輸入「今日進度」可查看累計營養攝取"""
-            
-            # 組合完整回應
-            full_response = f"🍽️ {meal_type}營養分析：\n\n{analysis_result}{confirmation_text}"
             
         except Exception as openai_error:
             print(f"🔍 DEBUG - OpenAI錯誤：{openai_error}")
             
-            # 🔧 修正6：API失敗時使用合理的預設值
+            # API失敗時使用合理的預設值
             nutrition_data = get_reasonable_nutrition_data(food_description)
             analysis_result = f"系統分析：{food_description}\n\n基於食物資料庫估算營養成分"
-            
-            # 仍然儲存記錄
-            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result, nutrition_data)
-            
-            confirmation_text = f"""
-
-✅ 已記錄你的{meal_type}
-
-📝 記錄內容：{food_description}
-📊 營養數據：
-熱量：{nutrition_data.get('calories', 0):.0f} 大卡
-碳水：{nutrition_data.get('carbs', 0):.1f}g
-蛋白質：{nutrition_data.get('protein', 0):.1f}g
-脂肪：{nutrition_data.get('fat', 0):.1f}g
-
-💡 輸入「今日進度」可查看累計營養攝取"""
-            
-            full_response = f"{analysis_result}{confirmation_text}"
         
-        line_bot_api.push_message(
-            event.source.user_id,
-            TextSendMessage(text=full_response)
-        )
+        # 🔧 新增：顯示確認訊息而不是直接儲存
+        show_meal_record_confirmation(event, user_id, meal_type, food_description, analysis_result, nutrition_data)
         
     except Exception as e:
         print(f"🔍 DEBUG - 系統錯誤：{e}")
@@ -1668,6 +1722,49 @@ def analyze_food_description(event, food_description):
             event.source.user_id,
             TextSendMessage(text=error_message)
         )
+
+# 🔧 新增：顯示記錄確認的函數
+def show_meal_record_confirmation(event, user_id, meal_type, food_description, analysis_result, nutrition_data):
+    """顯示飲食記錄確認訊息"""
+    
+    # 將確認資料暫存到用戶狀態
+    user_states[user_id] = {
+        'step': 'confirm_meal_record',
+        'confirm_data': {
+            'meal_type': meal_type,
+            'food_description': food_description,
+            'analysis_result': analysis_result,
+            'nutrition_data': nutrition_data
+        }
+    }
+    
+    # 組合確認顯示訊息
+    confirmation_display = f"""📋 請確認飲食記錄資訊
+
+🍽️ 餐型：{meal_type}
+📝 記錄內容：{food_description}
+
+📊 營養分析：
+熱量：{nutrition_data.get('calories', 0):.0f} 大卡
+碳水化合物：{nutrition_data.get('carbs', 0):.1f} g
+蛋白質：{nutrition_data.get('protein', 0):.1f} g
+脂肪：{nutrition_data.get('fat', 0):.1f} g
+纖維：{nutrition_data.get('fiber', 0):.1f} g
+
+{analysis_result}
+
+❓ 以上資訊是否正確？"""
+    
+    # 提供確認選項
+    quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="✅ 正確，請記錄", text="✅ 正確，請記錄")),
+        QuickReplyButton(action=MessageAction(label="❌ 錯誤，重新輸入", text="❌ 錯誤，重新輸入"))
+    ])
+    
+    line_bot_api.push_message(
+        event.source.user_id,
+        TextSendMessage(text=confirmation_display, quick_reply=quick_reply)
+    )
 
 def extract_nutrition_from_analysis_with_validation(analysis_text, food_description):
     """從分析文本中提取營養數據，並進行合理性檢查"""
@@ -3007,17 +3104,35 @@ def health_check():
 
 
 if __name__ == "__main__":
-    # 啟動排程器
-    keep_alive_thread = threading.Thread(target=keep_alive)
-    keep_alive_thread.daemon = True
-    keep_alive_thread.start()
-    start_scheduler()
-    port = int(os.environ.get('PORT', 5000))
-    print(f"啟動20年經驗糖尿病專業營養師機器人在端口 {port}")
-    print("主要功能：")
-    print("- 體脂率精準計算與營養目標制定")
-    print("- 糖尿病醣類控制專業建議")
-    print("- 每日營養追蹤與進度顯示")
-    print("- 主動提醒與月度更新提醒")
-    print("- 每日使用報告Email發送")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    import os
+
+    # 檢查是否在本地開發環境
+    is_local = os.getenv('RENDER') is None
+
+    if is_local:
+        print("🔧 本地開發模式")
+        print("📋 可用功能測試：")
+        print("- 資料庫連線測試")
+        print("- OpenAI API 測試") 
+        print("- 基本功能測試")
+        print()
+        
+        # 只啟動基本服務，不啟動 keep_alive 和 scheduler
+        port = int(os.environ.get('PORT', 5000))
+        print(f"🚀 本地伺服器啟動在 http://localhost:{port}")
+        app.run(host='127.0.0.1', port=port, debug=True)
+    else:
+        # 啟動排程器
+        keep_alive_thread = threading.Thread(target=keep_alive)
+        keep_alive_thread.daemon = True
+        keep_alive_thread.start()
+        start_scheduler()
+        port = int(os.environ.get('PORT', 5000))
+        print(f"啟動20年經驗糖尿病專業營養師機器人在端口 {port}")
+        print("主要功能：")
+        print("- 體脂率精準計算與營養目標制定")
+        print("- 糖尿病醣類控制專業建議")
+        print("- 每日營養追蹤與進度顯示")
+        print("- 主動提醒與月度更新提醒")
+        print("- 每日使用報告Email發送")
+        app.run(host='0.0.0.0', port=port, debug=True)
