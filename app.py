@@ -2067,10 +2067,10 @@ def analyze_food_description(event, food_description):
             target_cal = user_data['target_calories']
             target_carbs = user_data['target_carbs']
             target_protein = user_data['target_protein']
-            target_fat = user_data['target_fat']    
+            target_fat = user_data['target_fat']
             
-        diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
-        user_context = f"""
+            diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
+            user_context = f"""
 用戶資料：
 - 姓名：{name}，{age}歲，{gender}
 - 身高：{height}cm，體重：{weight}kg，體脂率：{body_fat:.1f}%
