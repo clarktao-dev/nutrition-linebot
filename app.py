@@ -696,6 +696,11 @@ def handle_text_message(event):
     user_id = event.source.user_id
     message_text = event.message.text
     
+    # 🔧 新增：處理取消請求
+    if message_text.lower().strip() in ['取消', 'cancel', '不要', '算了', '沒事', '不用了']:
+        handle_cancel_request(event)
+        return
+    
     if message_text.lower().strip() in ['重新啟動', '重啟', 'restart', 'reset', '重置', '重新開始', '清除', '初始化', '卡住了', '不動了', '重來']:
         # 清除用戶狀態
         if user_id in user_states:
@@ -731,7 +736,7 @@ def handle_text_message(event):
     if user_id not in user_states:
         user_states[user_id] = {'step': 'normal'}
 
-     # 🔧 新增：處理飲食記錄確認流程
+    # 🔧 新增：處理飲食記錄確認流程
     if user_states[user_id]['step'] == 'confirm_meal_record':
         handle_meal_record_confirmation(event, message_text)
         return
@@ -739,6 +744,11 @@ def handle_text_message(event):
     # 處理個人資料設定流程
     if user_states[user_id]['step'] != 'normal':
         handle_profile_setup_flow(event, message_text)
+        return
+    
+    # 🔧 新增：處理飲食記錄關鍵字
+    if message_text.lower().strip() in ['飲食記錄', '記錄飲食', '記錄', '飲食', '記錄食物', '食物記錄']:
+        handle_food_record_request(event)
         return
     
     # 主功能處理
@@ -768,6 +778,7 @@ def handle_text_message(event):
             # 預設為記錄飲食
             analyze_food_description_with_confirmation(event, message_text)
 
+
 def handle_welcome(event):
     user_id = event.source.user_id
     user = UserManager.get_user(user_id)
@@ -779,12 +790,19 @@ def handle_welcome(event):
 
 我是你的專屬AI營養師，可以：
 
-📝 記錄飲食：「早餐吃了燕麥粥」
+📝 記錄飲食：直接說「記錄飲食」或描述你吃的食物
 🍽️ 推薦餐點：「今天晚餐吃什麼？」
 ❓ 食物諮詢：「糖尿病可以吃香蕉嗎？」
-📊 健康追蹤：查看週報告
+📊 健康追蹤：查看「今日進度」或「週報告」
 
-直接跟我對話就可以了！"""
+💬 直接跟我對話就可以了！"""
+
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="📝 記錄飲食", text="記錄飲食")),
+            QuickReplyButton(action=MessageAction(label="📊 今日進度", text="今日進度")),
+            QuickReplyButton(action=MessageAction(label="🍽️ 飲食建議", text="飲食建議")),
+            QuickReplyButton(action=MessageAction(label="📈 週報告", text="週報告"))
+        ])
     else:
         welcome_text = """👋 歡迎使用AI營養師！
 
@@ -795,13 +813,13 @@ def handle_welcome(event):
 📊 提供營養報告
 
 建議先設定個人資料，讓我給你更準確的建議！"""
-    
-    quick_reply = QuickReply(items=[
-        QuickReplyButton(action=MessageAction(label="設定個人資料", text="設定個人資料")),
-        QuickReplyButton(action=MessageAction(label="飲食建議", text="飲食建議")),
-        QuickReplyButton(action=MessageAction(label="週報告", text="週報告")),
-        QuickReplyButton(action=MessageAction(label="使用說明", text="使用說明"))
-    ])
+
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="📝 設定個人資料", text="設定個人資料")),
+            QuickReplyButton(action=MessageAction(label="🍽️ 飲食建議", text="飲食建議")),
+            QuickReplyButton(action=MessageAction(label="📝 記錄飲食", text="記錄飲食")),
+            QuickReplyButton(action=MessageAction(label="📋 使用說明", text="使用說明"))
+        ])
     
     line_bot_api.reply_message(
         event.reply_token,
@@ -943,9 +961,19 @@ def show_daily_progress(event):
     user = UserManager.get_user(user_id)
     
     if not user:
+        # 🔧 新增：提供快速設定按鈕
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="📝 設定個人資料", text="設定個人資料")),
+            QuickReplyButton(action=MessageAction(label="🍽️ 先記錄飲食", text="記錄飲食")),
+            QuickReplyButton(action=MessageAction(label="📋 使用說明", text="使用說明"))
+        ])
+        
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="請先設定個人資料才能查看今日進度。")
+            TextSendMessage(
+                text="請先設定個人資料才能查看今日進度。\n\n點選下方按鈕快速開始：",
+                quick_reply=quick_reply
+            )
         )
         return
     
@@ -957,9 +985,20 @@ def show_daily_progress(event):
         today_meals = get_today_meals(user_id)
         
         if not daily_nutrition:
+            # 🔧 改善：有個人資料但沒記錄時的提示
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="📝 記錄早餐", text="記錄早餐")),
+                QuickReplyButton(action=MessageAction(label="📝 記錄午餐", text="記錄午餐")),
+                QuickReplyButton(action=MessageAction(label="📝 記錄晚餐", text="記錄晚餐")),
+                QuickReplyButton(action=MessageAction(label="🍽️ 飲食建議", text="飲食建議"))
+            ])
+            
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="今天還沒有飲食記錄喔！\n\n開始記錄你的飲食吧～")
+                TextSendMessage(
+                    text="今天還沒有飲食記錄喔！\n\n🎯 開始記錄你的飲食，追蹤營養攝取：",
+                    quick_reply=quick_reply
+                )
             )
             return
         
@@ -1239,6 +1278,78 @@ def provide_meal_suggestions(event, user_message=""):
             event.source.user_id,
             TextSendMessage(text=error_message)
         )
+
+# 🔧 修正3：新增取消處理函數
+def handle_cancel_request(event):
+    """處理取消請求"""
+    
+    # 清除用戶狀態
+    user_id = event.source.user_id
+    if user_id in user_states:
+        user_states[user_id] = {'step': 'normal'}
+    
+    cancel_text = """好的！👌
+
+我一直都在，有任何問題歡迎再來詢問！
+
+🎯 你可以隨時：
+• 記錄飲食獲得營養分析
+• 詢問飲食建議
+• 諮詢食物相關問題
+• 查看今日進度或週報告
+
+有需要幫助的時候再叫我～ 😊"""
+
+    quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="🍽️ 飲食建議", text="飲食建議")),
+        QuickReplyButton(action=MessageAction(label="📝 記錄飲食", text="記錄飲食")),
+        QuickReplyButton(action=MessageAction(label="📊 今日進度", text="今日進度")),
+        QuickReplyButton(action=MessageAction(label="📋 使用說明", text="使用說明"))
+    ])
+    
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=cancel_text, quick_reply=quick_reply)
+    )
+
+
+# 🔧 修正2：新增處理飲食記錄關鍵字的函數
+def handle_food_record_request(event):
+    """處理飲食記錄請求，提供引導"""
+    
+    guide_text = """📝 飲食記錄指南
+
+請告訴我你要記錄的內容：
+
+📋 請包含以下資訊：
+• 🕐 什麼時候：早餐/午餐/晚餐/點心
+• 🍽️ 吃了什麼：具體的食物名稱
+• 📏 份量多少：碗數、片數、杯數等
+
+💬 記錄範例：
+• 「早餐吃了蛋餅一份加豆漿一杯」
+• 「午餐：雞腿便當，有滷蛋和高麗菜」
+• 「晚餐吃了蒸魚一片、糙米飯半碗、炒青菜」
+• 「下午喝了拿鐵咖啡中杯」
+
+🎯 小提醒：
+越詳細的描述，營養分析越準確！
+包含份量資訊能讓我給你更精確的建議。
+
+💬 現在請描述你吃的食物："""
+
+    quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="📝 早餐記錄", text="早餐吃了")),
+        QuickReplyButton(action=MessageAction(label="📝 午餐記錄", text="午餐吃了")),
+        QuickReplyButton(action=MessageAction(label="📝 晚餐記錄", text="晚餐吃了")),
+        QuickReplyButton(action=MessageAction(label="📝 點心記錄", text="點心吃了")),
+        QuickReplyButton(action=MessageAction(label="❌ 取消", text="取消"))
+    ])
+    
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=guide_text, quick_reply=quick_reply)
+    )
 
 
 def provide_food_consultation(event, user_question):
@@ -2653,31 +2764,43 @@ def generate_weekly_report(event):
 def show_instructions(event):
     instructions = """📋 使用說明
 
+🏥 我是20年經驗營養師，特別專精糖尿病醣類控制
+
 🔹 主要功能：
-📝 記錄飲食：「早餐吃了蛋餅加豆漿」
+📝 記錄飲食：輸入「記錄飲食」或直接描述食物
 🍽️ 飲食建議：「今天晚餐吃什麼？」
 ❓ 食物諮詢：「糖尿病可以吃水果嗎？」
-📊 週報告：追蹤營養趨勢
+📊 營養追蹤：「今日進度」查看即時攝取
+📈 週報告：「週報告」追蹤營養趨勢
+
+🔹 記錄飲食格式：
+• 包含餐型：早餐/午餐/晚餐/點心
+• 描述食物：具體的食物名稱
+• 註明份量：碗數、片數、杯數等
+
+💬 記錄範例：
+• 「早餐吃了蛋餅一份加豆漿一杯」
+• 「午餐：雞腿便當，有滷蛋和高麗菜」
+• 「下午喝了拿鐵咖啡中杯」
 
 🔹 智慧對話範例：
 • 「不知道要吃什麼」→ 推薦適合餐點
 • 「香蕉適合我嗎？」→ 個人化食物建議
-• 「這個份量OK嗎？」→ 份量調整建議
+• 「血糖高能吃什麼？」→ 糖尿病專業建議
 
-🔹 個人化功能：
-✓ 記住你的身體資料
-✓ 根據健康目標建議
-✓ 避免你的飲食禁忌
-✓ 學習你的飲食偏好
+🔹 快速指令：
+• 輸入「取消」可隨時取消操作
+• 輸入「重新啟動」可重置對話狀態
+• 輸入「記錄飲食」開始記錄引導
 
 💡 小技巧：
 越詳細的描述，越準確的建議！"""
     
     quick_reply = QuickReply(items=[
-        QuickReplyButton(action=MessageAction(label="飲食建議", text="今天要吃什麼？")),
-        QuickReplyButton(action=MessageAction(label="食物諮詢", text="燕麥適合減重嗎？")),
-        QuickReplyButton(action=MessageAction(label="記錄飲食", text="午餐吃了雞腿便當")),
-        QuickReplyButton(action=MessageAction(label="週報告", text="週報告"))
+        QuickReplyButton(action=MessageAction(label="📝 記錄飲食", text="記錄飲食")),
+        QuickReplyButton(action=MessageAction(label="📊 今日進度", text="今日進度")),
+        QuickReplyButton(action=MessageAction(label="🍽️ 飲食建議", text="飲食建議")),
+        QuickReplyButton(action=MessageAction(label="📈 週報告", text="週報告"))
     ])
     
     line_bot_api.reply_message(
