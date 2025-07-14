@@ -2335,20 +2335,19 @@ def generate_weekly_report(event):
                 meals_summary += f"  • {meal}\n"
         
         # 安全取得用戶資料
-        try:
-            user_data = get_user_data(user)
-            name = user_data['name']
-            age = user_data['age']
-            gender = user_data['gender']
-            height = user_data['height']
-            weight = user_data['weight']
-            activity = user_data['activity_level']
-            goals = user_data['health_goals']
-            restrictions = user_data['dietary_restrictions']
-            diabetes = user_data['diabetes_type']
-        
+        user_data = get_user_data(user)
+        name = user_data['name']
+        age = user_data['age']
+        gender = user_data['gender']
+        height = user_data['height']
+        weight = user_data['weight']
+        activity = user_data['activity_level']
+        goals = user_data['health_goals']
+        restrictions = user_data['dietary_restrictions']
+        diabetes = user_data['diabetes_type']
+    
         diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
-        
+    
         user_context = f"""
 用戶資料：{name}，{age}歲，{gender}
 身高：{height}cm，體重：{weight}kg
