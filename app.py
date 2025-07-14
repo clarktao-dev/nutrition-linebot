@@ -820,14 +820,41 @@ def handle_meal_record_confirmation(event, message_text):
         try:
             print(f"🔍 DEBUG - 開始確認儲存流程")
             print(f"🔍 DEBUG - 確認數據：{confirm_data}")
+
+            # 🔧 新增：檢查 nutrition_data 是否存在且有效
+            nutrition_data = confirm_data.get('nutrition_data', {})
+            print(f"🔍 DEBUG - 營養數據詳細：{nutrition_data}")
+            print(f"🔍 DEBUG - 營養數據類型：{type(nutrition_data)}")            
             
+            # 🔧 新增：如果營養數據為空或無效，重新生成
+            if not nutrition_data or all(v == 0 for v in nutrition_data.values()):
+                print(f"⚠️ WARNING - 營養數據無效，重新生成")
+                food_description = confirm_data['food_description']
+                nutrition_data = get_reasonable_nutrition_data(food_description)
+                print(f"🔧 DEBUG - 重新生成的營養數據：{nutrition_data}")
+                
+                # 更新確認數據
+                confirm_data['nutrition_data'] = nutrition_data
+                user_states[user_id]['confirm_data'] = confirm_data
+            
+            # 🔧 新增：確保營養數據格式正確
+            validated_nutrition = {
+                'calories': float(nutrition_data.get('calories', 0)),
+                'carbs': float(nutrition_data.get('carbs', 0)),
+                'protein': float(nutrition_data.get('protein', 0)),
+                'fat': float(nutrition_data.get('fat', 0)),
+                'fiber': float(nutrition_data.get('fiber', 0)),
+                'sugar': float(nutrition_data.get('sugar', 0))
+            }
+            print(f"🔧 DEBUG - 驗證後營養數據：{validated_nutrition}")
+
             # 儲存飲食記錄
             UserManager.save_meal_record(
                 user_id, 
                 confirm_data['meal_type'], 
                 confirm_data['food_description'], 
                 confirm_data['analysis_result'], 
-                confirm_data['nutrition_data']
+                validated_nutrition  # 使用驗證過的營養數據
             )
             
             # 清除確認狀態
@@ -1720,6 +1747,10 @@ def analyze_food_description_with_confirmation(event, food_description):
         # 🔧 使用新的營養分析 Prompt
         nutrition_prompt = get_updated_nutrition_prompt(user_context)
         
+        # 初始化營養數據變數
+        nutrition_data = None
+        analysis_result = ""
+
         # 使用 OpenAI 分析
         try:
             from openai import OpenAI
@@ -1749,6 +1780,20 @@ def analyze_food_description_with_confirmation(event, food_description):
             nutrition_data = get_reasonable_nutrition_data(food_description)
             analysis_result = f"系統分析：{food_description}\n\n基於食物資料庫估算營養成分"
         
+        # 🔧 新增：最終驗證營養數據
+        if not nutrition_data or not isinstance(nutrition_data, dict):
+            print(f"❌ ERROR - 營養數據最終檢查失敗，重新生成")
+            nutrition_data = get_reasonable_nutrition_data(food_description)
+        
+        # 確保所有必需的營養素存在
+        required_nutrients = ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar']
+        for nutrient in required_nutrients:
+            if nutrient not in nutrition_data:
+                nutrition_data[nutrient] = 0
+        
+        print(f"🔧 DEBUG - 最終確認的營養數據：{nutrition_data}")
+        
+
         # 顯示確認訊息
         show_meal_record_confirmation(event, user_id, meal_type, food_description, analysis_result, nutrition_data)
         
@@ -1847,6 +1892,35 @@ def get_updated_nutrition_prompt(user_context):
 def show_meal_record_confirmation(event, user_id, meal_type, food_description, analysis_result, nutrition_data):
     """顯示飲食記錄確認訊息"""
     
+    print(f"🔍 DEBUG - show_meal_record_confirmation 收到的數據：")
+    print(f"   meal_type: {meal_type}")
+    print(f"   food_description: {food_description}")
+    print(f"   nutrition_data: {nutrition_data}")
+    print(f"   nutrition_data type: {type(nutrition_data)}")
+
+    # 🔧 新增：確保營養數據有效
+    if not nutrition_data or not isinstance(nutrition_data, dict):
+        print(f"⚠️ WARNING - 營養數據無效，使用合理預設值")
+        nutrition_data = get_reasonable_nutrition_data(food_description)
+        print(f"🔧 DEBUG - 重新生成營養數據：{nutrition_data}")
+    
+    # 🔧 新增：確保所有營養素都有數值
+    required_nutrients = ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar']
+    for nutrient in required_nutrients:
+        if nutrient not in nutrition_data or nutrition_data[nutrient] is None:
+            nutrition_data[nutrient] = 0
+            print(f"⚠️ WARNING - {nutrient} 缺失，設為0")
+    
+    # 🔧 新增：轉換為正確的數值類型
+    try:
+        for key in nutrition_data:
+            nutrition_data[key] = float(nutrition_data[key])
+    except (ValueError, TypeError) as e:
+        print(f"❌ ERROR - 營養數據轉換失敗：{e}")
+        nutrition_data = get_reasonable_nutrition_data(food_description)
+    
+    print(f"🔧 DEBUG - 最終營養數據：{nutrition_data}")
+
     # 將確認資料暫存到用戶狀態
     user_states[user_id] = {
         'step': 'confirm_meal_record',
@@ -1886,21 +1960,84 @@ def show_meal_record_confirmation(event, user_id, meal_type, food_description, a
         TextSendMessage(text=confirmation_display, quick_reply=quick_reply)
     )
 
-def extract_nutrition_from_analysis_with_validation(analysis_text, food_description):
-    """從分析文本中提取營養數據，並進行合理性檢查"""
+def extract_nutrition_from_analysis(analysis_text):
+    """從分析文本中提取營養數據（保留份量校正的加強版）"""
     import re
     
-    # 先嘗試從分析結果提取
+    print(f"🔍 DEBUG - 開始提取營養數據從：{analysis_text[:200]}...")
+    
+    # 更全面的正則表達式提取
+    patterns = {
+        'calories': [
+            r'熱量[:：]\s*約?(\d+(?:\.\d+)?)\s*大卡',
+            r'總熱量[:：]\s*約?(\d+(?:\.\d+)?)\s*大卡',
+            r'約(\d+(?:\.\d+)?)\s*大卡',
+            r'(\d+(?:\.\d+)?)\s*大卡'
+        ],
+        'carbs': [
+            r'碳水化合物[:：]\s*約?(\d+(?:\.\d+)?)\s*g',
+            r'碳水[:：]\s*約?(\d+(?:\.\d+)?)\s*g'
+        ],
+        'protein': [
+            r'蛋白質[:：]\s*約?(\d+(?:\.\d+)?)\s*g'
+        ],
+        'fat': [
+            r'脂肪[:：]\s*約?(\d+(?:\.\d+)?)\s*g'
+        ],
+        'fiber': [
+            r'纖維[:：]\s*約?(\d+(?:\.\d+)?)\s*g',
+            r'膳食纖維[:：]\s*約?(\d+(?:\.\d+)?)\s*g'
+        ],
+        'sugar': [
+            r'糖[:：]\s*約?(\d+(?:\.\d+)?)\s*g',
+            r'糖分[:：]\s*約?(\d+(?:\.\d+)?)\s*g'
+        ]
+    }
+    
+    def extract_value(patterns_list, text, default=0):
+        for pattern in patterns_list:
+            matches = re.findall(pattern, text)
+            if matches:
+                try:
+                    # 取第一個匹配的數值
+                    value = float(matches[0])
+                    print(f"🔍 DEBUG - 提取到 {pattern}: {value}")
+                    return value
+                except (ValueError, IndexError):
+                    continue
+        print(f"⚠️ WARNING - 未能提取數值，使用預設值：{default}")
+        return default
+    
+    # 提取各營養素
+    nutrition_data = {}
+    for nutrient, pattern_list in patterns.items():
+        nutrition_data[nutrient] = extract_value(pattern_list, analysis_text, 
+                                                {'calories': 150, 'carbs': 20, 'protein': 8, 
+                                                 'fat': 5, 'fiber': 2, 'sugar': 5}[nutrient])
+    
+    print(f"🔧 DEBUG - 原始提取的營養數據：{nutrition_data}")
+    return nutrition_data
+
+
+def extract_nutrition_from_analysis_with_validation(analysis_text, food_description):
+    """從分析文本中提取營養數據，並進行合理性檢查（保留原本份量校正）"""
+    import re
+    
+    print(f"🔍 DEBUG - 開始份量校正分析：{food_description}")
+    
+    # 先使用改良的基本提取函數
     nutrition_data = extract_nutrition_from_analysis(analysis_text)
     
-    # 🔧 合理性檢查：對常見食物進行驗證
+    # 🔧 保留原本的合理性檢查：對常見食物進行驗證
     food_lower = food_description.lower()
     
     # 檢測是否有份量描述
     portion_keywords = ['杯', 'ml', 'cc', '毫升', '份', '個', '片', '碗', '盤', '條', '根']
     has_portion = any(keyword in food_description for keyword in portion_keywords)
+    
+    print(f"🔍 DEBUG - 是否有份量描述：{has_portion}")
 
-    # 🔧 更新：豆漿合理性檢查（現在預設330ml）
+    # 🔧 保留：豆漿合理性檢查（現在預設330ml）
     if '豆漿' in food_lower:
         if not has_portion:
             # 沒特別說明時，應該是330ml的數據
@@ -1913,28 +2050,59 @@ def extract_nutrition_from_analysis_with_validation(analysis_text, food_descript
                 print(f"🔍 DEBUG - 豆漿250ml熱量異常：{nutrition_data['calories']}，修正為250ml標準")
                 return {'calories': 100, 'carbs': 10, 'protein': 7, 'fat': 4, 'fiber': 2, 'sugar': 8}
     
-    # 🔧 更新：咖啡合理性檢查
+    # 🔧 保留：咖啡合理性檢查
     elif '咖啡' in food_lower and '拿鐵' not in food_lower:
         if not has_portion:
             # 黑咖啡330ml
             if nutrition_data['calories'] > 15:
+                print(f"🔍 DEBUG - 咖啡熱量異常，修正為330ml標準")
                 return {'calories': 7, 'carbs': 1, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}
     
-    # 🔧 新增：其他飲料類檢查
+    # 🔧 保留：其他飲料類檢查
     elif any(drink in food_lower for drink in ['奶茶', '果汁', '可樂', '汽水']):
         if not has_portion and nutrition_data['calories'] < 50:
             # 可能低估了，330ml的飲料不應該少於50大卡
+            print(f"🔍 DEBUG - 飲料熱量過低，使用合理預設值")
             return get_reasonable_nutrition_data(food_description)
     
     elif '水' in food_lower and '果汁' not in food_lower:
+        print(f"🔍 DEBUG - 檢測到水，設為0熱量")
         return {'calories': 0, 'carbs': 0, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}
     
-    # 通用合理性檢查
+    # 🔧 保留：通用合理性檢查
     if nutrition_data['calories'] > 1000:  # 單一食物超過1000大卡要檢查
         print(f"🔍 DEBUG - 熱量異常：{nutrition_data['calories']}，食物：{food_description}")
         return get_reasonable_nutrition_data(food_description)
     
-    return nutrition_data
+    # 🔧 新增：確保所有數值都是有效的
+    validated_data = {}
+    for key, value in nutrition_data.items():
+        try:
+            validated_data[key] = float(value) if value is not None else 0.0
+        except (ValueError, TypeError):
+            validated_data[key] = 0.0
+            print(f"⚠️ WARNING - {key} 數值無效，設為0")
+    
+    print(f"🔧 DEBUG - 份量校正後的最終營養數據：{validated_data}")
+    return validated_data    
+
+def test_nutrition_extraction():
+    """測試營養數據提取功能"""
+    test_analysis = """
+🔍 實際攝取分析：
+熱量：約720大卡
+碳水化合物：28g
+蛋白質：35g
+脂肪：25g
+纖維：4g
+
+💡 這一餐評價：
+這餐營養豐富，蛋白質含量充足...
+"""
+    
+    result = extract_nutrition_from_analysis(test_analysis)
+    print(f"測試結果：{result}")
+    return result
 
 # 🔧 新增：合理營養數據資料庫
 def get_reasonable_nutrition_data(food_description):
@@ -3402,6 +3570,7 @@ if __name__ == "__main__":
         keep_alive_thread.start()
         start_scheduler()
         check_database_structure()
+        test_nutrition_extraction()
         port = int(os.environ.get('PORT', 5000))
         print(f"啟動20年經驗糖尿病專業營養師機器人在端口 {port}")
         print("主要功能：")
