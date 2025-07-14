@@ -1590,11 +1590,10 @@ def show_user_profile(event):
     )
 
 def analyze_food_description_with_confirmation(event, food_description):
-    """帶確認流程的飲食分析"""
+    """帶確認流程的飲食分析（更新版）"""
     user_id = event.source.user_id
     user = UserManager.get_user(user_id)
     
-    # 🔧 修正1：添加除錯日誌
     print(f"🔍 DEBUG - 用戶輸入：{food_description}")
     
     try:
@@ -1607,80 +1606,27 @@ def analyze_food_description_with_confirmation(event, food_description):
         meal_type = determine_meal_type(food_description)
         print(f"🔍 DEBUG - 判斷餐型：{meal_type}")
         
-        # 建立個人化提示 - 安全處理資料
+        # 建立個人化提示
         if user:
             user_data = get_user_data(user)
-            name = user_data['name']
-            age = user_data['age']
-            gender = user_data['gender']
-            height = user_data['height']
-            weight = user_data['weight']
-            activity = user_data['activity_level']
-            goals = user_data['health_goals']
-            restrictions = user_data['dietary_restrictions']
-            body_fat = user_data['body_fat_percentage']
-            diabetes = user_data['diabetes_type']
-            target_cal = user_data['target_calories']
-            target_carbs = user_data['target_carbs']
-            target_protein = user_data['target_protein']
-            target_fat = user_data['target_fat']
-            
-            diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
+            # ... [保持原有的用戶資料處理邏輯] ...
             user_context = f"""
 用戶資料：
-- 姓名：{name}，{age}歲，{gender}
-- 身高：{height}cm，體重：{weight}kg，體脂率：{body_fat:.1f}%
-- 活動量：{activity}
-- 健康目標：{goals}
-- 飲食限制：{restrictions}
-- {diabetes_context}
+- 姓名：{user_data['name']}，{user_data['age']}歲，{user_data['gender']}
+- 身高：{user_data['height']}cm，體重：{user_data['weight']}kg，體脂率：{user_data['body_fat_percentage']:.1f}%
+- 活動量：{user_data['activity_level']}
+- 健康目標：{user_data['health_goals']}
+- 飲食限制：{user_data['dietary_restrictions']}
+- 糖尿病類型：{user_data['diabetes_type'] if user_data['diabetes_type'] else '無'}
 
 每日營養目標：
-熱量：{target_cal:.0f}大卡，碳水：{target_carbs:.0f}g，蛋白質：{target_protein:.0f}g，脂肪：{target_fat:.0f}g
+熱量：{user_data['target_calories']:.0f}大卡，碳水：{user_data['target_carbs']:.0f}g，蛋白質：{user_data['target_protein']:.0f}g，脂肪：{user_data['target_fat']:.0f}g
 """
         else:
             user_context = "用戶未設定個人資料，請提供一般性建議。"
         
-        # 營養分析 Prompt
-        nutrition_prompt = f"""
-你是一位擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶實際吃的食物進行分析。
-
-{user_context}
-
-重要原則：
-1. 只分析用戶實際描述的食物，不要添加或建議其他餐點
-2. 對於常見食物要使用準確的營養數據
-3. 使用純文字格式，多用表情符號
-
-🔍 常見食物營養參考（請嚴格依照）：
-• 豆漿1杯(250ml)：熱量100大卡，碳水10g，蛋白質7g，脂肪4g
-• 咖啡1杯：熱量5大卡，碳水1g，蛋白質0g，脂肪0g
-• 白飯1碗：熱量280大卡，碳水62g，蛋白質6g，脂肪1g
-• 雞蛋1顆：熱量70大卡，碳水1g，蛋白質6g，脂肪5g
-• 全麥吐司1片：熱量80大卡，碳水15g，蛋白質3g，脂肪1g
-
-請提供：
-
-🔍 實際攝取分析：
-只分析用戶描述的這一餐，包括：
-熱量：約XX大卡
-碳水化合物：XXg
-蛋白質：XXg
-脂肪：XXg
-纖維：XXg
-
-💡 這一餐評價：
-基於用戶健康目標評估這餐是否合適
-這餐的優點和可改進之處
-
-🍽️ 下次進食建議：
-適合的食物類型和份量建議
-
-特別注意：
-- 嚴格按照常見食物營養參考提供數據
-- 一杯豆漿絕對不會超過120大卡
-- 確保營養數據的合理性
-"""
+        # 🔧 使用新的營養分析 Prompt
+        nutrition_prompt = get_updated_nutrition_prompt(user_context)
         
         # 使用 OpenAI 分析
         try:
@@ -1700,7 +1646,7 @@ def analyze_food_description_with_confirmation(event, food_description):
             analysis_result = response.choices[0].message.content
             print(f"🔍 DEBUG - AI分析結果：{analysis_result}")
             
-            # 改進營養數據提取，加入合理性檢查
+            # 🔧 使用更新的營養數據提取
             nutrition_data = extract_nutrition_from_analysis_with_validation(analysis_result, food_description)
             print(f"🔍 DEBUG - 提取的營養數據：{nutrition_data}")
             
@@ -1711,7 +1657,7 @@ def analyze_food_description_with_confirmation(event, food_description):
             nutrition_data = get_reasonable_nutrition_data(food_description)
             analysis_result = f"系統分析：{food_description}\n\n基於食物資料庫估算營養成分"
         
-        # 🔧 新增：顯示確認訊息而不是直接儲存
+        # 顯示確認訊息
         show_meal_record_confirmation(event, user_id, meal_type, food_description, analysis_result, nutrition_data)
         
     except Exception as e:
@@ -1722,6 +1668,88 @@ def analyze_food_description_with_confirmation(event, food_description):
             event.source.user_id,
             TextSendMessage(text=error_message)
         )
+
+# 🔧 修正2：更新營養分析 Prompt，加入份量預設邏輯
+def get_updated_nutrition_prompt(user_context):
+    """取得更新的營養分析提示，包含份量預設邏輯"""
+    
+    return f"""
+你是一位擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶實際吃的食物進行分析。
+
+{user_context}
+
+重要原則：
+1. 只分析用戶實際描述的食物，不要添加或建議其他餐點
+2. 對於常見食物要使用準確的營養數據
+3. 🔧 新增：份量預設規則
+   - 飲料類（豆漿、咖啡、奶茶、果汁等）：沒特別註明時以 330ml 計算
+   - 一般食物：沒特別註明時以 1份 計算
+   - 如果用戶有明確說明份量，則以用戶描述為準
+4. 使用純文字格式，多用表情符號
+
+🔍 常見食物營養參考（請嚴格依照）：
+
+🥛 飲料類（330ml基準）：
+• 豆漿：熱量132大卡，碳水13g，蛋白質9g，脂肪5g
+• 咖啡（黑咖啡）：熱量7大卡，碳水1g，蛋白質0g，脂肪0g
+• 拿鐵：熱量198大卡，碳水16g，蛋白質11g，脂肪11g
+• 奶茶：熱量231大卡，碳水35g，蛋白質7g，脂肪8g
+• 果汁：熱量145大卡，碳水36g，蛋白質1g，脂肪0g
+
+🍚 主食類（1份基準）：
+• 白飯1碗(150g)：熱量280大卡，碳水62g，蛋白質6g，脂肪1g
+• 糙米飯1碗(150g)：熱量220大卡，碳水45g，蛋白質5g，脂肪2g
+• 全麥吐司1片(30g)：熱量80大卡，碳水15g，蛋白質3g，脂肪1g
+
+🥩 蛋白質類（1份基準）：
+• 雞蛋1顆(50g)：熱量70大卡，碳水1g，蛋白質6g，脂肪5g
+• 雞胸肉1份(100g)：熱量165大卡，碳水0g，蛋白質31g，脂肪4g
+• 魚類1份(100g)：熱量140大卡，碳水0g，蛋白質26g，脂肪3g
+
+🥬 蔬菜類（1份基準）：
+• 青菜1份(100g)：熱量25大卡，碳水5g，蛋白質3g，脂肪0g
+• 沙拉1份(150g)：熱量50大卡，碳水8g，蛋白質3g，脂肪1g
+
+🍎 水果類（1份基準）：
+• 香蕉1根(100g)：熱量90大卡，碳水23g，蛋白質1g，脂肪0g
+• 蘋果1個(150g)：熱量80大卡，碳水21g，蛋白質0g，脂肪0g
+
+份量判斷規則：
+- 如果用戶說「豆漿」沒特別說明 → 預設330ml
+- 如果用戶說「雞蛋」沒特別說明 → 預設1顆
+- 如果用戶說「飯」沒特別說明 → 預設1碗
+- 如果用戶明確說「豆漿1杯」→ 以250ml計算
+- 如果用戶明確說「雞蛋2顆」→ 以2顆計算
+
+請提供：
+
+🔍 實際攝取分析：
+只分析用戶描述的這一餐，包括：
+熱量：約XX大卡
+碳水化合物：XXg
+蛋白質：XXg
+脂肪：XXg
+纖維：XXg
+
+💡 份量說明：
+明確標示使用的份量（例如：豆漿330ml、雞蛋1顆）
+
+💡 這一餐評價：
+基於用戶健康目標評估這餐是否合適
+這餐的優點和可改進之處
+
+🍽️ 下次進食建議：
+適合的食物類型和份量建議
+
+特別注意：
+不要建議用戶"今天還需要吃什麼來補足營養"
+不要假設一天必須吃三餐
+只針對實際吃的食物給建議
+尊重用戶的飲食節奏
+嚴格按照份量預設規則提供數據
+在分析中明確說明使用的份量假設
+確保營養數據的合理性
+"""
 
 # 🔧 新增：顯示記錄確認的函數
 def show_meal_record_confirmation(event, user_id, meal_type, food_description, analysis_result, nutrition_data):
@@ -1776,16 +1804,37 @@ def extract_nutrition_from_analysis_with_validation(analysis_text, food_descript
     # 🔧 合理性檢查：對常見食物進行驗證
     food_lower = food_description.lower()
     
+    # 檢測是否有份量描述
+    portion_keywords = ['杯', 'ml', 'cc', '毫升', '份', '個', '片', '碗', '盤', '條', '根']
+    has_portion = any(keyword in food_description for keyword in portion_keywords)
+
+    # 🔧 更新：豆漿合理性檢查（現在預設330ml）
     if '豆漿' in food_lower:
-        if nutrition_data['calories'] > 150:  # 一杯豆漿不應超過150大卡
-            print(f"🔍 DEBUG - 豆漿熱量異常：{nutrition_data['calories']}，修正為合理值")
-            return {'calories': 100, 'carbs': 10, 'protein': 7, 'fat': 4, 'fiber': 2, 'sugar': 8}
+        if not has_portion:
+            # 沒特別說明時，應該是330ml的數據
+            if nutrition_data['calories'] > 180:
+                print(f"🔍 DEBUG - 豆漿熱量異常：{nutrition_data['calories']}，修正為330ml標準")
+                return {'calories': 132, 'carbs': 13, 'protein': 9, 'fat': 5, 'fiber': 3, 'sugar': 10}
+        elif '1杯' in food_description or '250ml' in food_description:
+            # 明確說1杯或250ml時
+            if nutrition_data['calories'] > 150:
+                print(f"🔍 DEBUG - 豆漿250ml熱量異常：{nutrition_data['calories']}，修正為250ml標準")
+                return {'calories': 100, 'carbs': 10, 'protein': 7, 'fat': 4, 'fiber': 2, 'sugar': 8}
     
+    # 🔧 更新：咖啡合理性檢查
     elif '咖啡' in food_lower and '拿鐵' not in food_lower:
-        if nutrition_data['calories'] > 20:  # 黑咖啡不應超過20大卡
-            return {'calories': 5, 'carbs': 1, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}
+        if not has_portion:
+            # 黑咖啡330ml
+            if nutrition_data['calories'] > 15:
+                return {'calories': 7, 'carbs': 1, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}
     
-    elif '水' in food_lower:
+    # 🔧 新增：其他飲料類檢查
+    elif any(drink in food_lower for drink in ['奶茶', '果汁', '可樂', '汽水']):
+        if not has_portion and nutrition_data['calories'] < 50:
+            # 可能低估了，330ml的飲料不應該少於50大卡
+            return get_reasonable_nutrition_data(food_description)
+    
+    elif '水' in food_lower and '果汁' not in food_lower:
         return {'calories': 0, 'carbs': 0, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}
     
     # 通用合理性檢查
@@ -1800,27 +1849,90 @@ def get_reasonable_nutrition_data(food_description):
     """根據食物描述提供合理的營養數據"""
     food_lower = food_description.lower()
     
-    # 常見食物資料庫
-    food_database = {
-        '豆漿': {'calories': 100, 'carbs': 10, 'protein': 7, 'fat': 4, 'fiber': 2, 'sugar': 8},
-        '咖啡': {'calories': 5, 'carbs': 1, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0},
-        '拿鐵': {'calories': 150, 'carbs': 12, 'protein': 8, 'fat': 8, 'fiber': 0, 'sugar': 12},
-        '牛奶': {'calories': 150, 'carbs': 12, 'protein': 8, 'fat': 8, 'fiber': 0, 'sugar': 12},
-        '白飯': {'calories': 280, 'carbs': 62, 'protein': 6, 'fat': 1, 'fiber': 1, 'sugar': 0},
-        '雞蛋': {'calories': 70, 'carbs': 1, 'protein': 6, 'fat': 5, 'fiber': 0, 'sugar': 1},
-        '吐司': {'calories': 80, 'carbs': 15, 'protein': 3, 'fat': 1, 'fiber': 2, 'sugar': 2},
-        '香蕉': {'calories': 90, 'carbs': 23, 'protein': 1, 'fat': 0, 'fiber': 3, 'sugar': 12},
-        '蘋果': {'calories': 80, 'carbs': 21, 'protein': 0, 'fat': 0, 'fiber': 4, 'sugar': 16}
+    # 🔧 新增：檢測份量關鍵字
+    portion_keywords = ['杯', 'ml', 'cc', '毫升', '公升', 'l', '份', '個', '片', '碗', '盤', '包', '罐', '瓶', '條']
+    has_portion = any(keyword in food_description for keyword in portion_keywords)
+    
+    print(f"🔍 DEBUG - 食物描述：{food_description}")
+    print(f"🔍 DEBUG - 是否有份量描述：{has_portion}")
+    
+    # 🔧 更新：飲料類營養資料庫（以330ml為基準）
+    drink_database = {
+        '豆漿': {'calories': 132, 'carbs': 13, 'protein': 9, 'fat': 5, 'fiber': 3, 'sugar': 10},  # 330ml
+        '咖啡': {'calories': 7, 'carbs': 1, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0},      # 330ml 黑咖啡
+        '拿鐵': {'calories': 198, 'carbs': 16, 'protein': 11, 'fat': 11, 'fiber': 0, 'sugar': 16}, # 330ml
+        '牛奶': {'calories': 198, 'carbs': 16, 'protein': 11, 'fat': 11, 'fiber': 0, 'sugar': 16}, # 330ml
+        '奶茶': {'calories': 231, 'carbs': 35, 'protein': 7, 'fat': 8, 'fiber': 0, 'sugar': 30},   # 330ml
+        '果汁': {'calories': 145, 'carbs': 36, 'protein': 1, 'fat': 0, 'fiber': 1, 'sugar': 32},   # 330ml 柳橙汁
+        '可樂': {'calories': 139, 'carbs': 35, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 35},   # 330ml
+        '茶': {'calories': 3, 'carbs': 1, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0},         # 330ml 無糖茶
+        '水': {'calories': 0, 'carbs': 0, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}          # 330ml
     }
     
-    # 尋找匹配的食物
+    # 🔧 更新：一般食物營養資料庫（以一份為基準）
+    food_database = {
+        '白飯': {'calories': 280, 'carbs': 62, 'protein': 6, 'fat': 1, 'fiber': 1, 'sugar': 0},    # 1碗(150g)
+        '糙米飯': {'calories': 220, 'carbs': 45, 'protein': 5, 'fat': 2, 'fiber': 4, 'sugar': 0},  # 1碗(150g)
+        '雞蛋': {'calories': 70, 'carbs': 1, 'protein': 6, 'fat': 5, 'fiber': 0, 'sugar': 1},      # 1顆(50g)
+        '吐司': {'calories': 80, 'carbs': 15, 'protein': 3, 'fat': 1, 'fiber': 2, 'sugar': 2},     # 1片(30g)
+        '全麥吐司': {'calories': 80, 'carbs': 15, 'protein': 3, 'fat': 1, 'fiber': 2, 'sugar': 2}, # 1片(30g)
+        '雞胸肉': {'calories': 165, 'carbs': 0, 'protein': 31, 'fat': 4, 'fiber': 0, 'sugar': 0},  # 1份(100g)
+        '雞腿': {'calories': 250, 'carbs': 0, 'protein': 26, 'fat': 16, 'fiber': 0, 'sugar': 0},   # 1份(100g)
+        '魚': {'calories': 140, 'carbs': 0, 'protein': 26, 'fat': 3, 'fiber': 0, 'sugar': 0},      # 1份(100g)
+        '豆腐': {'calories': 80, 'carbs': 2, 'protein': 8, 'fat': 5, 'fiber': 1, 'sugar': 1},      # 1塊(100g)
+        '香蕉': {'calories': 90, 'carbs': 23, 'protein': 1, 'fat': 0, 'fiber': 3, 'sugar': 12},    # 1根(100g)
+        '蘋果': {'calories': 80, 'carbs': 21, 'protein': 0, 'fat': 0, 'fiber': 4, 'sugar': 16},    # 1個(150g)
+        '麵包': {'calories': 80, 'carbs': 15, 'protein': 3, 'fat': 1, 'fiber': 2, 'sugar': 2},     # 1片(30g)
+        '麵': {'calories': 220, 'carbs': 44, 'protein': 8, 'fat': 1, 'fiber': 2, 'sugar': 2},      # 1份(100g乾重)
+        '青菜': {'calories': 25, 'carbs': 5, 'protein': 3, 'fat': 0, 'fiber': 3, 'sugar': 2},      # 1份(100g)
+        '沙拉': {'calories': 50, 'carbs': 8, 'protein': 3, 'fat': 1, 'fiber': 4, 'sugar': 4},      # 1份(150g)
+    }
+
+    # 🔧 新增：如果沒有份量描述，使用預設份量說明
+    portion_note = ""
+    if not has_portion:
+        portion_note = "（系統預設份量）"
+    
+    # 優先檢查飲料類
+    for keyword, nutrition in drink_database.items():
+        if keyword in food_lower:
+            adjusted_nutrition = nutrition.copy()
+            
+            # 如果有特別註明份量，需要調整計算
+            if has_portion and ('250ml' in food_description or '1杯' in food_description):
+                # 從330ml調整為250ml
+                ratio = 250 / 330
+                for key in ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar']:
+                    adjusted_nutrition[key] = round(nutrition[key] * ratio, 1)
+                portion_note = "（250ml）"
+            elif not has_portion:
+                portion_note = "（預設330ml）"
+            
+            print(f"🔍 DEBUG - 飲料匹配：{keyword} = {adjusted_nutrition} {portion_note}")
+            return adjusted_nutrition
+    
+    # 檢查一般食物
     for keyword, nutrition in food_database.items():
         if keyword in food_lower:
-            print(f"🔍 DEBUG - 使用資料庫數據：{keyword} = {nutrition}")
-            return nutrition
+            adjusted_nutrition = nutrition.copy()
+            
+            if not has_portion:
+                portion_note = "（預設1份）"
+            
+            print(f"🔍 DEBUG - 食物匹配：{keyword} = {adjusted_nutrition} {portion_note}")
+            return adjusted_nutrition
     
-    # 如果沒有匹配，提供保守估計
-    return {'calories': 150, 'carbs': 20, 'protein': 5, 'fat': 5, 'fiber': 2, 'sugar': 5}
+    # 🔧 新增：如果沒有匹配到任何食物，根據描述推測類型
+    if any(drink_word in food_lower for drink_word in ['汁', '茶', '咖啡', '奶', '水', '飲', '可樂', '汽水']):
+        # 推測為飲料類，使用330ml基準
+        default_nutrition = {'calories': 100, 'carbs': 15, 'protein': 2, 'fat': 2, 'fiber': 1, 'sugar': 12}
+        print(f"🔍 DEBUG - 推測為飲料類：{default_nutrition}（預設330ml）")
+        return default_nutrition
+    else:
+        # 推測為一般食物，使用1份基準
+        default_nutrition = {'calories': 150, 'carbs': 20, 'protein': 8, 'fat': 5, 'fiber': 2, 'sugar': 5}
+        print(f"🔍 DEBUG - 推測為一般食物：{default_nutrition}（預設1份）")
+        return default_nutrition
 
 def determine_meal_type(description):
     """判斷餐型"""
@@ -2441,16 +2553,46 @@ def analyze_food_description(event, food_description):
 
 重要原則：
 1. 只分析用戶實際描述的食物，不要添加或建議其他餐點
-2. 不要假設用戶一天吃三餐，只分析這一餐
-3. 基於實際攝取提供建議，不要補足未吃的餐點
-4. 使用純文字格式，多用表情符號，不要使用 # *  等符號
+2. 對於常見食物要使用準確的營養數據
+3. 🔧 新增：份量預設規則
+   - 飲料類（豆漿、咖啡、奶茶、果汁等）：沒特別註明時以 330ml 計算
+   - 一般食物：沒特別註明時以 1份 計算
+   - 如果用戶有明確說明份量，則以用戶描述為準
+4. 使用純文字格式，多用表情符號
 
-份量參考標準：
-🍚 主食: 1碗 = 1拳頭大 = 150-200g = 200-250大卡
-🥩 蛋白質: 1份 = 1手掌大厚度 = 100-120g = 120-200大卡
-🥬 蔬菜: 1份 = 煮熟100g = 生菜200g = 25-50大卡
-🥜 堅果: 1份 = 30g = 1湯匙 = 180大卡
-🍎 水果: 1份 = 1個拳頭大 = 150g = 60-100大卡
+🥛 飲料類（330ml基準）：
+• 豆漿：熱量132大卡，碳水13g，蛋白質9g，脂肪5g
+• 咖啡（黑咖啡）：熱量7大卡，碳水1g，蛋白質0g，脂肪0g
+• 拿鐵：熱量198大卡，碳水16g，蛋白質11g，脂肪11g
+• 奶茶：熱量231大卡，碳水35g，蛋白質7g，脂肪8g
+• 果汁：熱量145大卡，碳水36g，蛋白質1g，脂肪0g
+
+🍚 主食類（1份基準）：
+• 白飯1碗(150g)：熱量280大卡，碳水62g，蛋白質6g，脂肪1g
+• 糙米飯1碗(150g)：熱量220大卡，碳水45g，蛋白質5g，脂肪2g
+• 全麥吐司1片(30g)：熱量80大卡，碳水15g，蛋白質3g，脂肪1g
+
+🥩 蛋白質類（1份基準）：
+• 雞蛋1顆(50g)：熱量70大卡，碳水1g，蛋白質6g，脂肪5g
+• 雞胸肉1份(100g)：熱量165大卡，碳水0g，蛋白質31g，脂肪4g
+• 魚類1份(100g)：熱量140大卡，碳水0g，蛋白質26g，脂肪3g
+
+🥬 蔬菜類（1份基準）：
+• 青菜1份(100g)：熱量25大卡，碳水5g，蛋白質3g，脂肪0g
+• 沙拉1份(150g)：熱量50大卡，碳水8g，蛋白質3g，脂肪1g
+
+🍎 水果類（1份基準）：
+• 香蕉1根(100g)：熱量90大卡，碳水23g，蛋白質1g，脂肪0g
+• 蘋果1個(150g)：熱量80大卡，碳水21g，蛋白質0g，脂肪0g
+
+份量判斷規則：
+- 如果用戶說「豆漿」沒特別說明 → 預設330ml
+- 如果用戶說「雞蛋」沒特別說明 → 預設1顆
+- 如果用戶說「飯」沒特別說明 → 預設1碗
+- 如果用戶明確說「豆漿1杯」→ 以250ml計算
+- 如果用戶明確說「雞蛋2顆」→ 以2顆計算
+
+請提供：
 
 請提供：
 
@@ -2477,6 +2619,9 @@ def analyze_food_description(event, food_description):
 不要假設一天必須吃三餐
 只針對實際吃的食物給建議
 尊重用戶的飲食節奏
+嚴格按照份量預設規則提供數據
+在分析中明確說明使用的份量假設
+確保營養數據的合理性
 
 請確保在回應中清楚標示各營養素的數值，格式如：熱量：300大卡，碳水化合物：45g
 """
