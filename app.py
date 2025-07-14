@@ -35,135 +35,137 @@ user_states = {}
 
 # 資料庫初始化
 def init_db():
-    conn = sqlite3.connect('nutrition_bot.db', timeout=20.0)
-    cursor = conn.cursor()
+    conn = None
+    try:
+        conn = sqlite3.connect('nutrition_bot.db', timeout=20.0)
+        cursor = conn.cursor()
     
-    # 用戶資料表
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id TEXT PRIMARY KEY,
-            name TEXT,
-            age INTEGER,
-            gender TEXT,
-            height REAL,
-            weight REAL,
-            activity_level TEXT,
-            health_goals TEXT,
-            dietary_restrictions TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            body_fat_percentage REAL DEFAULT 0,
-            diabetes_type TEXT,
-            target_calories REAL DEFAULT 2000,
-            target_carbs REAL DEFAULT 250,
-            target_protein REAL DEFAULT 100,
-            target_fat REAL DEFAULT 70,
-            bmr REAL DEFAULT 1500,
-            tdee REAL DEFAULT 2000,
-            last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_reminder_sent TIMESTAMP,
-            last_profile_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            visceral_fat_level INTEGER DEFAULT 0,
-            muscle_mass REAL DEFAULT 0
-        )
-    ''')
-    
-    # 添加用戶表的新欄位
-    user_columns = [
-        ('body_fat_percentage', 'REAL DEFAULT 0'),
-        ('diabetes_type', 'TEXT'),
-        ('target_calories', 'REAL DEFAULT 2000'),
-        ('target_carbs', 'REAL DEFAULT 250'),
-        ('target_protein', 'REAL DEFAULT 100'),
-        ('target_fat', 'REAL DEFAULT 70'),
-        ('bmr', 'REAL DEFAULT 1500'),
-        ('tdee', 'REAL DEFAULT 2000'),
-        ('last_active', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'),
-        ('last_reminder_sent', 'TIMESTAMP'),
-        ('last_profile_update', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'),
-        ('visceral_fat_level', 'INTEGER DEFAULT 0'),
-        ('muscle_mass', 'REAL DEFAULT 0')
-    ]
+        # 用戶資料表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                name TEXT,
+                age INTEGER,
+                gender TEXT,
+                height REAL,
+                weight REAL,
+                activity_level TEXT,
+                health_goals TEXT,
+                dietary_restrictions TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                body_fat_percentage REAL DEFAULT 0,
+                diabetes_type TEXT,
+                target_calories REAL DEFAULT 2000,
+                target_carbs REAL DEFAULT 250,
+                target_protein REAL DEFAULT 100,
+                target_fat REAL DEFAULT 70,
+                bmr REAL DEFAULT 1500,
+                tdee REAL DEFAULT 2000,
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_reminder_sent TIMESTAMP,
+                last_profile_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                visceral_fat_level INTEGER DEFAULT 0,
+                muscle_mass REAL DEFAULT 0
+            )
+        ''')
+        
+        # 添加用戶表的新欄位
+        user_columns = [
+            ('body_fat_percentage', 'REAL DEFAULT 0'),
+            ('diabetes_type', 'TEXT'),
+            ('target_calories', 'REAL DEFAULT 2000'),
+            ('target_carbs', 'REAL DEFAULT 250'),
+            ('target_protein', 'REAL DEFAULT 100'),
+            ('target_fat', 'REAL DEFAULT 70'),
+            ('bmr', 'REAL DEFAULT 1500'),
+            ('tdee', 'REAL DEFAULT 2000'),
+            ('last_active', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'),
+            ('last_reminder_sent', 'TIMESTAMP'),
+            ('last_profile_update', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'),
+            ('visceral_fat_level', 'INTEGER DEFAULT 0'),
+            ('muscle_mass', 'REAL DEFAULT 0')
+        ]
 
 
-    
-    for column_name, column_type in user_columns:
-        try:
-            cursor.execute(f'ALTER TABLE users ADD COLUMN {column_name} {column_type}')
-            print(f"已添加用戶欄位：{column_name}")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" in str(e):
-                pass  # 欄位已存在，忽略
-            else:
-                print(f"添加用戶欄位 {column_name} 時發生錯誤：{e}")
-    
-    # 添加新的營養素欄位（如果不存在）
-    nutrition_columns = [
-        ('calories', 'REAL DEFAULT 0'),
-        ('carbs', 'REAL DEFAULT 0'),
-        ('protein', 'REAL DEFAULT 0'),
-        ('fat', 'REAL DEFAULT 0'),
-        ('fiber', 'REAL DEFAULT 0'),
-        ('sugar', 'REAL DEFAULT 0')
-    ]
+        
+        for column_name, column_type in user_columns:
+            try:
+                cursor.execute(f'ALTER TABLE users ADD COLUMN {column_name} {column_type}')
+                print(f"已添加用戶欄位：{column_name}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" in str(e):
+                    pass  # 欄位已存在，忽略
+                else:
+                    print(f"添加用戶欄位 {column_name} 時發生錯誤：{e}")
+        
+        # 添加新的營養素欄位（如果不存在）
+        nutrition_columns = [
+            ('calories', 'REAL DEFAULT 0'),
+            ('carbs', 'REAL DEFAULT 0'),
+            ('protein', 'REAL DEFAULT 0'),
+            ('fat', 'REAL DEFAULT 0'),
+            ('fiber', 'REAL DEFAULT 0'),
+            ('sugar', 'REAL DEFAULT 0')
+        ]
 
-    for column_name, column_type in nutrition_columns:
-        try:
-            cursor.execute(f'ALTER TABLE meal_records ADD COLUMN {column_name} {column_type}')
-            print(f"已添加欄位：{column_name}")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" in str(e):
-                print(f"欄位 {column_name} 已存在")
-            else:
-                print(f"添加欄位 {column_name} 時發生錯誤：{e}")
-    
-    # 飲食記錄表
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS meal_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT,
-            meal_type TEXT,
-            meal_description TEXT,
-            nutrition_analysis TEXT,
-            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (user_id)
-        )
-    ''')
+        for column_name, column_type in nutrition_columns:
+            try:
+                cursor.execute(f'ALTER TABLE meal_records ADD COLUMN {column_name} {column_type}')
+                print(f"已添加欄位：{column_name}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" in str(e):
+                    print(f"欄位 {column_name} 已存在")
+                else:
+                    print(f"添加欄位 {column_name} 時發生錯誤：{e}")
+        
+        # 飲食記錄表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS meal_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                meal_type TEXT,
+                meal_description TEXT,
+                nutrition_analysis TEXT,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
 
-    # 每日營養總結表
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS daily_nutrition (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT,
-            date TEXT,
-            total_calories REAL DEFAULT 0,
-            total_carbs REAL DEFAULT 0,
-            total_protein REAL DEFAULT 0,
-            total_fat REAL DEFAULT 0,
-            total_fiber REAL DEFAULT 0,
-            total_sugar REAL DEFAULT 0,
-            meal_count INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(user_id, date),
-            FOREIGN KEY (user_id) REFERENCES users (user_id)
-        )
-    ''')
+        # 每日營養總結表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS daily_nutrition (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                date TEXT,
+                total_calories REAL DEFAULT 0,
+                total_carbs REAL DEFAULT 0,
+                total_protein REAL DEFAULT 0,
+                total_fat REAL DEFAULT 0,
+                total_fiber REAL DEFAULT 0,
+                total_sugar REAL DEFAULT 0,
+                meal_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, date),
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
 
-    # 飲食偏好表（記錄用戶常吃的食物）
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS food_preferences (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT,
-            food_item TEXT,
-            frequency INTEGER DEFAULT 1,
-            last_eaten TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (user_id)
-        )
-    ''')
-    
-    conn.commit()
-    print("資料庫初始化成功")
-    
+        # 飲食偏好表（記錄用戶常吃的食物）
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS food_preferences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                food_item TEXT,
+                frequency INTEGER DEFAULT 1,
+                last_eaten TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        conn.commit()
+        print("資料庫初始化成功")
+        
     except Exception as e:
         if conn:
             conn.rollback()
