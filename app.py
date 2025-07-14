@@ -685,6 +685,8 @@ def handle_text_message(event):
         show_instructions(event)
     elif message_text == "飲食建議":
         provide_meal_suggestions(event)
+    elif message_text == "今日進度":
+        show_daily_progress(event)
     else:
         # 分析用戶意圖
         intent = MessageAnalyzer.detect_intent(message_text)
@@ -736,6 +738,156 @@ def handle_welcome(event):
         event.reply_token,
         TextSendMessage(text=welcome_text, quick_reply=quick_reply)
     )
+
+def show_daily_progress(event):
+    """顯示今日營養進度"""
+    user_id = event.source.user_id
+    user = UserManager.get_user(user_id)
+    
+    if not user:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="請先設定個人資料才能查看今日進度。")
+        )
+        return
+    
+    try:
+        user_data = get_user_data(user)
+        daily_nutrition = UserManager.get_daily_nutrition(user_id)
+        
+        # 取得今日所有餐點記錄
+        today_meals = get_today_meals(user_id)
+        
+        if not daily_nutrition:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="今天還沒有飲食記錄喔！\n\n開始記錄你的飲食吧～")
+            )
+            return
+        
+        # 營養數據
+        current_calories = daily_nutrition[3] or 0
+        current_carbs = daily_nutrition[4] or 0
+        current_protein = daily_nutrition[5] or 0
+        current_fat = daily_nutrition[6] or 0
+        meal_count = daily_nutrition[8] or 0
+        
+        # 目標數據
+        target_calories = user_data['target_calories']
+        target_carbs = user_data['target_carbs']
+        target_protein = user_data['target_protein']
+        target_fat = user_data['target_fat']
+        
+        # 計算進度百分比
+        calories_percent = (current_calories / target_calories * 100) if target_calories > 0 else 0
+        carbs_percent = (current_carbs / target_carbs * 100) if target_carbs > 0 else 0
+        protein_percent = (current_protein / target_protein * 100) if target_protein > 0 else 0
+        fat_percent = (current_fat / target_fat * 100) if target_fat > 0 else 0
+        
+        # 剩餘需求
+        remaining_calories = max(0, target_calories - current_calories)
+        remaining_carbs = max(0, target_carbs - current_carbs)
+        remaining_protein = max(0, target_protein - current_protein)
+        remaining_fat = max(0, target_fat - current_fat)
+        
+        # 生成進度條
+        def generate_progress_bar(percent):
+            if percent >= 100:
+                return "🟢🟢🟢🟢🟢 100%+"
+            elif percent >= 80:
+                return "🟢🟢🟢🟢🟡 " + f"{percent:.0f}%"
+            elif percent >= 60:
+                return "🟢🟢🟢🟡🟡 " + f"{percent:.0f}%"
+            elif percent >= 40:
+                return "🟢🟢🟡🟡🟡 " + f"{percent:.0f}%"
+            elif percent >= 20:
+                return "🟢🟡🟡🟡🟡 " + f"{percent:.0f}%"
+            else:
+                return "🟡🟡🟡🟡🟡 " + f"{percent:.0f}%"
+        
+        # 組合今日進度報告
+        progress_text = f"""📊 今日營養進度
+
+👤 {user_data['name']} 的營養追蹤
+
+🔥 熱量進度：
+{generate_progress_bar(calories_percent)}
+攝取：{current_calories:.0f} / 目標：{target_calories:.0f} 大卡
+還需要：{remaining_calories:.0f} 大卡
+
+🍚 碳水化合物：
+{generate_progress_bar(carbs_percent)}
+攝取：{current_carbs:.1f} / 目標：{target_carbs:.0f} g
+還需要：{remaining_carbs:.1f} g
+
+🥩 蛋白質：
+{generate_progress_bar(protein_percent)}
+攝取：{current_protein:.1f} / 目標：{target_protein:.0f} g
+還需要：{remaining_protein:.1f} g
+
+🥑 脂肪：
+{generate_progress_bar(fat_percent)}
+攝取：{current_fat:.1f} / 目標：{target_fat:.0f} g
+還需要：{remaining_fat:.1f} g
+
+📝 今日用餐記錄：({meal_count} 餐)
+"""
+        
+        # 添加今日餐點列表
+        if today_meals:
+            for meal in today_meals:
+                meal_time = meal[4][:5] if len(meal) > 4 else "未知時間"  # 取時間部分
+                progress_text += f"• {meal_time} {meal[1]}：{meal[2][:30]}{'...' if len(meal[2]) > 30 else ''}\n"
+        
+        # 添加建議
+        if calories_percent < 80:
+            progress_text += f"\n💡 建議：今日熱量攝取不足，建議再攝取 {remaining_calories:.0f} 大卡"
+        elif calories_percent > 120:
+            over_calories = current_calories - target_calories
+            progress_text += f"\n⚠️ 提醒：今日熱量已超標 {over_calories:.0f} 大卡，建議明日適量減少"
+        else:
+            progress_text += "\n✅ 很棒！今日營養攝取均衡"
+        
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="記錄飲食", text="記錄飲食")),
+            QuickReplyButton(action=MessageAction(label="飲食建議", text="飲食建議")),
+            QuickReplyButton(action=MessageAction(label="週報告", text="週報告"))
+        ])
+        
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=progress_text, quick_reply=quick_reply)
+        )
+        
+    except Exception as e:
+        error_message = f"抱歉，無法取得今日進度：{str(e)}"
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=error_message)
+        )
+
+def get_today_meals(user_id):
+    """取得今日所有餐點記錄"""
+    conn = None
+    try:
+        conn = sqlite3.connect('nutrition_bot.db', timeout=10.0)
+        cursor = conn.cursor()
+        today = datetime.now().strftime('%Y-%m-%d')
+        cursor.execute('''
+            SELECT meal_type, meal_description, nutrition_analysis, 
+                   DATE(recorded_at) as meal_date, TIME(recorded_at) as meal_time
+            FROM meal_records 
+            WHERE user_id = ? AND DATE(recorded_at) = ?
+            ORDER BY recorded_at ASC
+        ''', (user_id, today))
+        meals = cursor.fetchall()
+        return meals
+    except Exception as e:
+        print(f"取得今日餐點錯誤：{e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
 
 def provide_meal_suggestions(event, user_message=""):
     """提供飲食建議"""
@@ -1300,7 +1452,7 @@ def handle_profile_setup_flow(event, message_text):
 ❓ 諮詢食物問題"""
         
         quick_reply = QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="飲食建議", text="今天晚餐吃什麼？")),
+            QuickReplyButton(action=MessageAction(label="飲食建議", text="等等可以吃什麼？")),
             QuickReplyButton(action=MessageAction(label="食物諮詢", text="我可以吃巧克力嗎？")),
             QuickReplyButton(action=MessageAction(label="使用說明", text="使用說明"))
         ])
@@ -1348,6 +1500,9 @@ def analyze_food_description(event, food_description):
     user_id = event.source.user_id
     user = UserManager.get_user(user_id)
     
+    # 🔧 修正1：添加除錯日誌
+    print(f"🔍 DEBUG - 用戶輸入：{food_description}")
+    
     try:
         line_bot_api.reply_message(
             event.reply_token,
@@ -1356,21 +1511,43 @@ def analyze_food_description(event, food_description):
         
         # 判斷餐型
         meal_type = determine_meal_type(food_description)
+        print(f"🔍 DEBUG - 判斷餐型：{meal_type}")
         
-        # 建立個人化提示
+        # 建立個人化提示 - 安全處理資料
         if user:
+            user_data = get_user_data(user)
+            name = user_data['name']
+            age = user_data['age']
+            gender = user_data['gender']
+            height = user_data['height']
+            weight = user_data['weight']
+            activity = user_data['activity_level']
+            goals = user_data['health_goals']
+            restrictions = user_data['dietary_restrictions']
+            body_fat = user_data['body_fat_percentage']
+            diabetes = user_data['diabetes_type']
+            target_cal = user_data['target_calories']
+            target_carbs = user_data['target_carbs']
+            target_protein = user_data['target_protein']
+            target_fat = user_data['target_fat']
+            
+            diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
             user_context = f"""
 用戶資料：
-- 姓名：{user[1]}，{user[2]}歲，{user[3]}
-- 身高：{user[4]}cm，體重：{user[5]}kg
-- 活動量：{user[6]}
-- 健康目標：{user[7]}
-- 飲食限制：{user[8]}
+- 姓名：{name}，{age}歲，{gender}
+- 身高：{height}cm，體重：{weight}kg，體脂率：{body_fat:.1f}%
+- 活動量：{activity}
+- 健康目標：{goals}
+- 飲食限制：{restrictions}
+- {diabetes_context}
+
+每日營養目標：
+熱量：{target_cal:.0f}大卡，碳水：{target_carbs:.0f}g，蛋白質：{target_protein:.0f}g，脂肪：{target_fat:.0f}g
 """
         else:
             user_context = "用戶未設定個人資料，請提供一般性建議。"
         
-        # 修改後的營養分析 Prompt
+        # 🔧 修正2：改進營養分析 Prompt，加強常見食物識別
         nutrition_prompt = f"""
 你是一位擁有20年經驗的專業營養師，特別專精糖尿病醣類控制。請根據用戶實際吃的食物進行分析。
 
@@ -1378,63 +1555,37 @@ def analyze_food_description(event, food_description):
 
 重要原則：
 1. 只分析用戶實際描述的食物，不要添加或建議其他餐點
-2. 不要假設用戶一天吃三餐，只分析這一餐
-3. 基於實際攝取提供建議，不要補足未吃的餐點
-4. 使用純文字格式，多用表情符號
+2. 對於常見食物要使用準確的營養數據
+3. 使用純文字格式，多用表情符號
 
-份量參考標準：
-🍚 主食: 1碗 = 1拳頭大 = 150-200g = 200-250大卡
-🥩 蛋白質: 1份 = 1手掌大厚度 = 100-120g = 120-200大卡
-🥬 蔬菜: 1份 = 煮熟100g = 生菜200g = 25-50大卡
-🥜 堅果: 1份 = 30g = 1湯匙 = 180大卡
-🍎 水果: 1份 = 1個拳頭大 = 150g = 60-100大卡
+🔍 常見食物營養參考（請嚴格依照）：
+• 豆漿1杯(250ml)：熱量100大卡，碳水10g，蛋白質7g，脂肪4g
+• 咖啡1杯：熱量5大卡，碳水1g，蛋白質0g，脂肪0g
+• 白飯1碗：熱量280大卡，碳水62g，蛋白質6g，脂肪1g
+• 雞蛋1顆：熱量70大卡，碳水1g，蛋白質6g，脂肪5g
+• 全麥吐司1片：熱量80大卡，碳水15g，蛋白質3g，脂肪1g
 
-糖尿病患者特別分析：
-重點分析血糖影響、計算醣類含量、評估GI值影響、建議血糖監測時機
+請提供：
 
 🔍 實際攝取分析：
 只分析用戶描述的這一餐，包括：
-- 估算熱量、碳水化合物、蛋白質、脂肪、纖維
-- 各食物分別的營養貢獻
-- 這餐的營養密度評估
+熱量：約XX大卡
+碳水化合物：XXg
+蛋白質：XXg
+脂肪：XXg
+纖維：XXg
 
 💡 這一餐評價：
-- 基於用戶健康目標評估這餐是否合適
-- 這餐的優點和可改進之處
-- 對血糖的影響（如有糖尿病）
+基於用戶健康目標評估這餐是否合適
+這餐的優點和可改進之處
 
 🍽️ 下次進食建議：
-當用戶想吃下一餐時，建議：
-- 適合的食物類型和份量
-- 與這餐的營養互補
-- 具體的食物選擇
+適合的食物類型和份量建議
 
-⚠️ 特別注意：
-- 不要建議用戶"今天還需要吃什麼來補足營養"
-- 不要假設一天必須吃三餐
-- 只針對實際吃的食物給建議
-- 尊重用戶的飲食節奏
-
-回應格式範例：
-🔍 你這餐吃的營養分析
-
-📊 實際攝取：
-熱量：約300大卡
-碳水化合物：35g
-蛋白質：20g
-脂肪：8g
-
-💡 這餐評價：
-蛋白質比例很好，有助肌肉維持
-碳水適中，不會造成血糖急升
-
-🍽️ 下次想吃的時候：
-可以選擇蔬菜類，補充纖維和維生素
-建議份量：綠葉蔬菜 150g（約1.5份）
-
-請只分析實際吃的食物，不要添加建議餐點。
-
-請用純文字格式，多用表情符號，讓回應清晰易讀。
+特別注意：
+- 嚴格按照常見食物營養參考提供數據
+- 一杯豆漿絕對不會超過120大卡
+- 確保營養數據的合理性
 """
         
         # 使用 OpenAI 分析
@@ -1453,19 +1604,64 @@ def analyze_food_description(event, food_description):
             )
             
             analysis_result = response.choices[0].message.content
+            print(f"🔍 DEBUG - AI分析結果：{analysis_result}")
             
-            # 儲存飲食記錄
-            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result)
+            # 🔧 修正3：改進營養數據提取，加入合理性檢查
+            nutrition_data = extract_nutrition_from_analysis_with_validation(analysis_result, food_description)
+            print(f"🔍 DEBUG - 提取的營養數據：{nutrition_data}")
+            
+            # 🔧 修正4：確保記錄正確的食物描述
+            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result, nutrition_data)
+            
+            # 🔧 修正5：確認訊息使用正確的food_description
+            confirmation_text = f"""
+
+✅ 已記錄你的{meal_type}
+
+📝 記錄內容：{food_description}
+📊 營養數據：
+熱量：{nutrition_data.get('calories', 0):.0f} 大卡
+碳水：{nutrition_data.get('carbs', 0):.1f}g
+蛋白質：{nutrition_data.get('protein', 0):.1f}g
+脂肪：{nutrition_data.get('fat', 0):.1f}g
+
+💡 輸入「今日進度」可查看累計營養攝取"""
+            
+            # 組合完整回應
+            full_response = f"🍽️ {meal_type}營養分析：\n\n{analysis_result}{confirmation_text}"
             
         except Exception as openai_error:
-            analysis_result = f"OpenAI 分析暫時無法使用：{str(openai_error)}\n\n請確保 API 額度充足，或稍後再試。"
+            print(f"🔍 DEBUG - OpenAI錯誤：{openai_error}")
+            
+            # 🔧 修正6：API失敗時使用合理的預設值
+            nutrition_data = get_reasonable_nutrition_data(food_description)
+            analysis_result = f"系統分析：{food_description}\n\n基於食物資料庫估算營養成分"
+            
+            # 仍然儲存記錄
+            UserManager.save_meal_record(user_id, meal_type, food_description, analysis_result, nutrition_data)
+            
+            confirmation_text = f"""
+
+✅ 已記錄你的{meal_type}
+
+📝 記錄內容：{food_description}
+📊 營養數據：
+熱量：{nutrition_data.get('calories', 0):.0f} 大卡
+碳水：{nutrition_data.get('carbs', 0):.1f}g
+蛋白質：{nutrition_data.get('protein', 0):.1f}g
+脂肪：{nutrition_data.get('fat', 0):.1f}g
+
+💡 輸入「今日進度」可查看累計營養攝取"""
+            
+            full_response = f"{analysis_result}{confirmation_text}"
         
         line_bot_api.push_message(
             event.source.user_id,
-            TextSendMessage(text=f"🍽️ {meal_type}營養分析：\n\n{analysis_result}")
+            TextSendMessage(text=full_response)
         )
         
     except Exception as e:
+        print(f"🔍 DEBUG - 系統錯誤：{e}")
         error_message = f"抱歉，分析出現問題：{str(e)}\n\n請重新描述你的飲食內容。"
         
         line_bot_api.push_message(
@@ -1473,6 +1669,61 @@ def analyze_food_description(event, food_description):
             TextSendMessage(text=error_message)
         )
 
+def extract_nutrition_from_analysis_with_validation(analysis_text, food_description):
+    """從分析文本中提取營養數據，並進行合理性檢查"""
+    import re
+    
+    # 先嘗試從分析結果提取
+    nutrition_data = extract_nutrition_from_analysis(analysis_text)
+    
+    # 🔧 合理性檢查：對常見食物進行驗證
+    food_lower = food_description.lower()
+    
+    if '豆漿' in food_lower:
+        if nutrition_data['calories'] > 150:  # 一杯豆漿不應超過150大卡
+            print(f"🔍 DEBUG - 豆漿熱量異常：{nutrition_data['calories']}，修正為合理值")
+            return {'calories': 100, 'carbs': 10, 'protein': 7, 'fat': 4, 'fiber': 2, 'sugar': 8}
+    
+    elif '咖啡' in food_lower and '拿鐵' not in food_lower:
+        if nutrition_data['calories'] > 20:  # 黑咖啡不應超過20大卡
+            return {'calories': 5, 'carbs': 1, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}
+    
+    elif '水' in food_lower:
+        return {'calories': 0, 'carbs': 0, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}
+    
+    # 通用合理性檢查
+    if nutrition_data['calories'] > 1000:  # 單一食物超過1000大卡要檢查
+        print(f"🔍 DEBUG - 熱量異常：{nutrition_data['calories']}，食物：{food_description}")
+        return get_reasonable_nutrition_data(food_description)
+    
+    return nutrition_data
+
+# 🔧 新增：合理營養數據資料庫
+def get_reasonable_nutrition_data(food_description):
+    """根據食物描述提供合理的營養數據"""
+    food_lower = food_description.lower()
+    
+    # 常見食物資料庫
+    food_database = {
+        '豆漿': {'calories': 100, 'carbs': 10, 'protein': 7, 'fat': 4, 'fiber': 2, 'sugar': 8},
+        '咖啡': {'calories': 5, 'carbs': 1, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0},
+        '拿鐵': {'calories': 150, 'carbs': 12, 'protein': 8, 'fat': 8, 'fiber': 0, 'sugar': 12},
+        '牛奶': {'calories': 150, 'carbs': 12, 'protein': 8, 'fat': 8, 'fiber': 0, 'sugar': 12},
+        '白飯': {'calories': 280, 'carbs': 62, 'protein': 6, 'fat': 1, 'fiber': 1, 'sugar': 0},
+        '雞蛋': {'calories': 70, 'carbs': 1, 'protein': 6, 'fat': 5, 'fiber': 0, 'sugar': 1},
+        '吐司': {'calories': 80, 'carbs': 15, 'protein': 3, 'fat': 1, 'fiber': 2, 'sugar': 2},
+        '香蕉': {'calories': 90, 'carbs': 23, 'protein': 1, 'fat': 0, 'fiber': 3, 'sugar': 12},
+        '蘋果': {'calories': 80, 'carbs': 21, 'protein': 0, 'fat': 0, 'fiber': 4, 'sugar': 16}
+    }
+    
+    # 尋找匹配的食物
+    for keyword, nutrition in food_database.items():
+        if keyword in food_lower:
+            print(f"🔍 DEBUG - 使用資料庫數據：{keyword} = {nutrition}")
+            return nutrition
+    
+    # 如果沒有匹配，提供保守估計
+    return {'calories': 150, 'carbs': 20, 'protein': 5, 'fat': 5, 'fiber': 2, 'sugar': 5}
 
 def determine_meal_type(description):
     """判斷餐型"""
@@ -1800,7 +2051,7 @@ def handle_image_message(event):
     
     quick_reply = QuickReply(items=[
         QuickReplyButton(action=MessageAction(label="今日進度", text="今日進度")),
-        QuickReplyButton(action=MessageAction(label="飲食建議", text="今天晚餐吃什麼？")),
+        QuickReplyButton(action=MessageAction(label="飲食建議", text="等等可以吃什麼？")),
         QuickReplyButton(action=MessageAction(label="食物諮詢", text="這個食物適合我嗎？"))
     ])
     
