@@ -1946,18 +1946,17 @@ def provide_food_consultation(event, user_question):
         
         # 準備用戶背景資訊 - 安全處理資料
         if user:
-            try:
-                user_data = get_user_data(user)
-                name = user_data['name']
-                age = user_data['age']
-                gender = user_data['gender']
-                height = user_data['height']
-                weight = user_data['weight']
-                activity = user_data['activity_level']
-                goals = user_data['health_goals']
-                restrictions = user_data['dietary_restrictions']
-                body_fat = user_data['body_fat_percentage']
-                diabetes = user_data['diabetes_type']
+            user_data = get_user_data(user)
+            name = user_data['name']
+            age = user_data['age']
+            gender = user_data['gender']
+            height = user_data['height']
+            weight = user_data['weight']
+            activity = user_data['activity_level']
+            goals = user_data['health_goals']
+            restrictions = user_data['dietary_restrictions']
+            body_fat = user_data['body_fat_percentage']
+            diabetes = user_data['diabetes_type']
             
             diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
             user_context = f"""
@@ -2493,15 +2492,17 @@ def generate_weekly_report(event):
 
 def show_user_profile(event):
     user_id = event.source.user_id
-    user_data = get_user_data(user_id)  # 添加這行
+    user = UserManager.get_user(user_id)  # 添加這行
     
-    if not user_data:
+    if not user:
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="你還沒有設定個人資料。請先點選「設定個人資料」。")
         )
         return
     
+     user_data = get_user_data(user)
+
     bmi = user_data['weight'] / ((user_data['height'] / 100) ** 2)
     body_fat = user_data['body_fat_percentage']
     
