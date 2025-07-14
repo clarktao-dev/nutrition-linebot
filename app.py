@@ -2053,25 +2053,24 @@ def analyze_food_description(event, food_description):
         
         # 建立個人化提示 - 安全處理資料
         if user:
-            try:
-                user_data = get_user_data(user)
-                name = user_data['name']
-                age = user_data['age']
-                gender = user_data['gender']
-                height = user_data['height']
-                weight = user_data['weight']
-                activity = user_data['activity_level']
-                goals = user_data['health_goals']
-                restrictions = user_data['dietary_restrictions']
-                body_fat = user_data['body_fat_percentage']
-                diabetes = user_data['diabetes_type']
-                target_cal = user_data['target_calories']
-                target_carbs = user_data['target_carbs']
-                target_protein = user_data['target_protein']
-                target_fat = user_data['target_fat']    
+            user_data = get_user_data(user)
+            name = user_data['name']
+            age = user_data['age']
+            gender = user_data['gender']
+            height = user_data['height']
+            weight = user_data['weight']
+            activity = user_data['activity_level']
+            goals = user_data['health_goals']
+            restrictions = user_data['dietary_restrictions']
+            body_fat = user_data['body_fat_percentage']
+            diabetes = user_data['diabetes_type']
+            target_cal = user_data['target_calories']
+            target_carbs = user_data['target_carbs']
+            target_protein = user_data['target_protein']
+            target_fat = user_data['target_fat']    
             
-            diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
-            user_context = f"""
+        diabetes_context = f"糖尿病類型：{diabetes}" if diabetes else "無糖尿病"
+        user_context = f"""
 用戶資料：
 - 姓名：{name}，{age}歲，{gender}
 - 身高：{height}cm，體重：{weight}kg，體脂率：{body_fat:.1f}%
@@ -2501,7 +2500,7 @@ def show_user_profile(event):
         )
         return
     
-     user_data = get_user_data(user)
+    user_data = get_user_data(user)
 
     bmi = user_data['weight'] / ((user_data['height'] / 100) ** 2)
     body_fat = user_data['body_fat_percentage']
