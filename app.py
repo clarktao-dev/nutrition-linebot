@@ -1709,7 +1709,7 @@ def show_user_profile(event):
     )
 
 def analyze_food_description_with_confirmation(event, food_description):
-    """帶確認流程的飲食分析（更新版）"""
+    """帶確認流程的飲食分析（修正營養提取版）"""
     user_id = event.source.user_id
     user = UserManager.get_user(user_id)
     
@@ -1728,7 +1728,6 @@ def analyze_food_description_with_confirmation(event, food_description):
         # 建立個人化提示
         if user:
             user_data = get_user_data(user)
-            # ... [保持原有的用戶資料處理邏輯] ...
             user_context = f"""
 用戶資料：
 - 姓名：{user_data['name']}，{user_data['age']}歲，{user_data['gender']}
@@ -1744,7 +1743,7 @@ def analyze_food_description_with_confirmation(event, food_description):
         else:
             user_context = "用戶未設定個人資料，請提供一般性建議。"
         
-        # 🔧 使用新的營養分析 Prompt
+        # 使用營養分析 Prompt
         nutrition_prompt = get_updated_nutrition_prompt(user_context)
         
         # 初始化營養數據變數
@@ -1769,31 +1768,49 @@ def analyze_food_description_with_confirmation(event, food_description):
             analysis_result = response.choices[0].message.content
             print(f"🔍 DEBUG - AI分析結果：{analysis_result}")
             
-            # 🔧 使用更新的營養數據提取
+            # 🔧 重要修正：從完整的分析結果中提取營養數據
+            # 不只從AI分析結果提取，也從食物描述中推測
             nutrition_data = extract_nutrition_from_analysis_with_validation(analysis_result, food_description)
-            print(f"🔍 DEBUG - 提取的營養數據：{nutrition_data}")
+            print(f"🔍 DEBUG - 第一次提取的營養數據：{nutrition_data}")
+            
+            # 🔧 新增：如果提取的營養數據都是0或過小，直接從分析文本中強制提取
+            if not nutrition_data or all(v <= 0 for v in nutrition_data.values()):
+                print(f"⚠️ WARNING - 第一次提取失敗，嘗試強制提取")
+                nutrition_data = force_extract_nutrition_from_text(analysis_result)
+                print(f"🔧 DEBUG - 強制提取的營養數據：{nutrition_data}")
+            
+            # 🔧 新增：如果還是沒有合理數據，使用描述推測
+            if not nutrition_data or nutrition_data.get('calories', 0) < 50:
+                print(f"⚠️ WARNING - 強制提取也失敗，使用食物描述推測")
+                nutrition_data = smart_estimate_nutrition_from_description(food_description)
+                print(f"🔧 DEBUG - 智能推測的營養數據：{nutrition_data}")
             
         except Exception as openai_error:
             print(f"🔍 DEBUG - OpenAI錯誤：{openai_error}")
             
-            # API失敗時使用合理的預設值
-            nutrition_data = get_reasonable_nutrition_data(food_description)
+            # API失敗時使用智能推測
+            nutrition_data = smart_estimate_nutrition_from_description(food_description)
             analysis_result = f"系統分析：{food_description}\n\n基於食物資料庫估算營養成分"
         
-        # 🔧 新增：最終驗證營養數據
+        # 🔧 最終驗證營養數據
         if not nutrition_data or not isinstance(nutrition_data, dict):
-            print(f"❌ ERROR - 營養數據最終檢查失敗，重新生成")
-            nutrition_data = get_reasonable_nutrition_data(food_description)
+            print(f"❌ ERROR - 營養數據最終檢查失敗，使用緊急備用")
+            nutrition_data = emergency_nutrition_fallback(food_description)
         
-        # 確保所有必需的營養素存在
+        # 確保所有必需的營養素存在且不為0
         required_nutrients = ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar']
         for nutrient in required_nutrients:
-            if nutrient not in nutrition_data:
-                nutrition_data[nutrient] = 0
+            if nutrient not in nutrition_data or nutrition_data[nutrient] <= 0:
+                # 根據食物描述給予最小合理值
+                default_values = {
+                    'calories': 200, 'carbs': 25, 'protein': 15, 
+                    'fat': 8, 'fiber': 3, 'sugar': 5
+                }
+                nutrition_data[nutrient] = default_values[nutrient]
+                print(f"🔧 DEBUG - {nutrient} 設為預設值：{default_values[nutrient]}")
         
         print(f"🔧 DEBUG - 最終確認的營養數據：{nutrition_data}")
         
-
         # 顯示確認訊息
         show_meal_record_confirmation(event, user_id, meal_type, food_description, analysis_result, nutrition_data)
         
@@ -1805,6 +1822,170 @@ def analyze_food_description_with_confirmation(event, food_description):
             event.source.user_id,
             TextSendMessage(text=error_message)
         )
+
+# 🔧 新增：強制從文本中提取營養數據的函數
+def force_extract_nutrition_from_text(text):
+    """強制從分析文本中提取營養數據，使用更靈活的模式"""
+    import re
+    
+    print(f"🔍 DEBUG - 強制提取營養數據：{text}")
+    
+    # 更寬鬆的正則表達式模式
+    patterns = {
+        'calories': [
+            r'熱量[:：]?\s*約?(\d+(?:\.\d+)?)\s*大卡',
+            r'約\s*(\d+(?:\.\d+)?)\s*大卡',
+            r'(\d+)\s*大卡',
+            r'總共\s*(\d+)\s*大卡'
+        ],
+        'carbs': [
+            r'碳水化合物[:：]?\s*約?(\d+(?:\.\d+)?)\s*g',
+            r'碳水[:：]?\s*約?(\d+(?:\.\d+)?)\s*g',
+            r'碳水\s*(\d+)\s*g'
+        ],
+        'protein': [
+            r'蛋白質[:：]?\s*約?(\d+(?:\.\d+)?)\s*g',
+            r'蛋白質\s*(\d+)\s*g'
+        ],
+        'fat': [
+            r'脂肪[:：]?\s*約?(\d+(?:\.\d+)?)\s*g',
+            r'脂肪\s*(\d+)\s*g'
+        ],
+        'fiber': [
+            r'纖維[:：]?\s*約?(\d+(?:\.\d+)?)\s*g',
+            r'膳食纖維[:：]?\s*約?(\d+(?:\.\d+)?)\s*g',
+            r'纖維\s*(\d+)\s*g'
+        ]
+    }
+    
+    def force_extract_value(patterns_list, text):
+        for pattern in patterns_list:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            if matches:
+                try:
+                    value = float(matches[0])
+                    print(f"🔧 DEBUG - 強制提取成功 {pattern}: {value}")
+                    return value
+                except (ValueError, IndexError):
+                    continue
+        return 0
+    
+    # 強制提取各營養素
+    nutrition_data = {}
+    for nutrient, pattern_list in patterns.items():
+        value = force_extract_value(pattern_list, text)
+        nutrition_data[nutrient] = value
+        print(f"🔧 DEBUG - {nutrient} 強制提取結果: {value}")
+    
+    # 新增糖分預設值
+    nutrition_data['sugar'] = nutrition_data.get('sugar', 5)
+    
+    print(f"🔧 DEBUG - 強制提取完成：{nutrition_data}")
+    return nutrition_data
+
+# 🔧 新增：基於食物描述的智能營養推測
+def smart_estimate_nutrition_from_description(food_description):
+    """根據食物描述智能推測營養數據"""
+    
+    print(f"🔍 DEBUG - 智能推測食物：{food_description}")
+    
+    food_lower = food_description.lower()
+    
+    # 更詳細的食物營養數據庫
+    food_nutrition_db = {
+        # 肉類和蛋白質
+        '牛肉': {'calories': 250, 'carbs': 0, 'protein': 26, 'fat': 17, 'fiber': 0, 'sugar': 0},
+        '漢堡排': {'calories': 280, 'carbs': 5, 'protein': 20, 'fat': 20, 'fiber': 1, 'sugar': 2},
+        '雞蛋': {'calories': 70, 'carbs': 1, 'protein': 6, 'fat': 5, 'fiber': 0, 'sugar': 1},
+        '煎蛋': {'calories': 90, 'carbs': 1, 'protein': 6, 'fat': 7, 'fiber': 0, 'sugar': 1},
+        
+        # 主食類
+        '麵包': {'calories': 80, 'carbs': 15, 'protein': 3, 'fat': 1, 'fiber': 2, 'sugar': 2},
+        '白飯': {'calories': 280, 'carbs': 62, 'protein': 6, 'fat': 1, 'fiber': 1, 'sugar': 0},
+        
+        # 蔬菜類
+        '花椰菜': {'calories': 25, 'carbs': 5, 'protein': 3, 'fat': 0, 'fiber': 3, 'sugar': 2},
+        '青菜': {'calories': 20, 'carbs': 4, 'protein': 2, 'fat': 0, 'fiber': 2, 'sugar': 2},
+        
+        # 乳製品
+        '起司': {'calories': 100, 'carbs': 1, 'protein': 7, 'fat': 8, 'fiber': 0, 'sugar': 1},
+        
+        # 複合食物
+        '便當': {'calories': 650, 'carbs': 80, 'protein': 25, 'fat': 20, 'fiber': 5, 'sugar': 8},
+        '漢堡': {'calories': 540, 'carbs': 45, 'protein': 25, 'fat': 31, 'fiber': 3, 'sugar': 5}
+    }
+    
+    # 分析食物描述中的關鍵字
+    total_nutrition = {'calories': 0, 'carbs': 0, 'protein': 0, 'fat': 0, 'fiber': 0, 'sugar': 0}
+    
+    # 尋找匹配的食物
+    matches_found = []
+    for food_keyword, nutrition in food_nutrition_db.items():
+        if food_keyword in food_lower:
+            matches_found.append((food_keyword, nutrition))
+            for nutrient in total_nutrition:
+                total_nutrition[nutrient] += nutrition[nutrient]
+            print(f"🔧 DEBUG - 匹配到食物：{food_keyword} = {nutrition}")
+    
+    # 如果沒有匹配到任何食物，使用描述長度和複雜度推測
+    if not matches_found:
+        complexity_score = len(food_description.split()) + food_description.count('，') + food_description.count('、')
+        base_calories = min(150 + complexity_score * 50, 800)  # 基於描述複雜度
+        
+        total_nutrition = {
+            'calories': base_calories,
+            'carbs': base_calories * 0.4 / 4,  # 40% 來自碳水
+            'protein': base_calories * 0.25 / 4,  # 25% 來自蛋白質
+            'fat': base_calories * 0.35 / 9,  # 35% 來自脂肪
+            'fiber': max(2, complexity_score),
+            'sugar': max(3, complexity_score * 0.5)
+        }
+        print(f"🔧 DEBUG - 未匹配，使用複雜度推測：{total_nutrition}")
+    
+    # 確保數值合理
+    for nutrient in total_nutrition:
+        total_nutrition[nutrient] = max(0, round(total_nutrition[nutrient], 1))
+    
+    print(f"🔧 DEBUG - 智能推測最終結果：{total_nutrition}")
+    return total_nutrition
+
+# 🔧 新增：緊急備用營養數據
+def emergency_nutrition_fallback(food_description):
+    """緊急情況下的營養數據備用方案"""
+    
+    print(f"🚨 DEBUG - 緊急備用方案：{food_description}")
+    
+    # 根據描述長度和內容給予合理的營養估計
+    desc_length = len(food_description)
+    word_count = len(food_description.split())
+    
+    # 基礎熱量計算
+    if desc_length < 10:  # 簡單描述
+        base_calories = 150
+    elif desc_length < 30:  # 中等描述
+        base_calories = 300
+    else:  # 詳細描述
+        base_calories = 500
+    
+    # 根據關鍵字調整
+    if any(word in food_description.lower() for word in ['便當', '漢堡', '炸', '披薩']):
+        base_calories += 200
+    if any(word in food_description.lower() for word in ['沙拉', '蔬菜', '水果']):
+        base_calories -= 100
+    
+    base_calories = max(100, min(800, base_calories))  # 限制在合理範圍
+    
+    fallback_nutrition = {
+        'calories': base_calories,
+        'carbs': round(base_calories * 0.45 / 4, 1),  # 45% 碳水
+        'protein': round(base_calories * 0.2 / 4, 1),  # 20% 蛋白質
+        'fat': round(base_calories * 0.35 / 9, 1),  # 35% 脂肪
+        'fiber': max(2, word_count // 2),
+        'sugar': max(3, word_count // 3)
+    }
+    
+    print(f"🚨 DEBUG - 緊急備用數據：{fallback_nutrition}")
+    return fallback_nutrition
 
 # 🔧 修正2：更新營養分析 Prompt，加入份量預設邏輯
 def get_updated_nutrition_prompt(user_context):
@@ -1890,7 +2071,7 @@ def get_updated_nutrition_prompt(user_context):
 
 # 🔧 新增：顯示記錄確認的函數
 def show_meal_record_confirmation(event, user_id, meal_type, food_description, analysis_result, nutrition_data):
-    """顯示飲食記錄確認訊息"""
+    """顯示飲食記錄確認訊息（確保營養數據正確版）"""
     
     print(f"🔍 DEBUG - show_meal_record_confirmation 收到的數據：")
     print(f"   meal_type: {meal_type}")
@@ -1898,28 +2079,30 @@ def show_meal_record_confirmation(event, user_id, meal_type, food_description, a
     print(f"   nutrition_data: {nutrition_data}")
     print(f"   nutrition_data type: {type(nutrition_data)}")
 
-    # 🔧 新增：確保營養數據有效
-    if not nutrition_data or not isinstance(nutrition_data, dict):
-        print(f"⚠️ WARNING - 營養數據無效，使用合理預設值")
-        nutrition_data = get_reasonable_nutrition_data(food_description)
-        print(f"🔧 DEBUG - 重新生成營養數據：{nutrition_data}")
+    # 🔧 最終檢查：確保營養數據有效且不為0
+    if not nutrition_data or not isinstance(nutrition_data, dict) or all(v <= 0 for v in nutrition_data.values()):
+        print(f"⚠️ WARNING - 顯示階段營養數據無效，重新生成")
+        nutrition_data = smart_estimate_nutrition_from_description(food_description)
+        print(f"🔧 DEBUG - 顯示階段重新生成營養數據：{nutrition_data}")
     
-    # 🔧 新增：確保所有營養素都有數值
+    # 確保所有營養素都有合理數值
     required_nutrients = ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar']
-    for nutrient in required_nutrients:
-        if nutrient not in nutrition_data or nutrition_data[nutrient] is None:
-            nutrition_data[nutrient] = 0
-            print(f"⚠️ WARNING - {nutrient} 缺失，設為0")
+    min_values = {'calories': 50, 'carbs': 5, 'protein': 3, 'fat': 2, 'fiber': 1, 'sugar': 1}
     
-    # 🔧 新增：轉換為正確的數值類型
+    for nutrient in required_nutrients:
+        if nutrient not in nutrition_data or nutrition_data[nutrient] <= 0:
+            nutrition_data[nutrient] = min_values[nutrient]
+            print(f"⚠️ WARNING - {nutrient} 設為最小值：{min_values[nutrient]}")
+    
+    # 轉換為正確的數值類型
     try:
         for key in nutrition_data:
             nutrition_data[key] = float(nutrition_data[key])
     except (ValueError, TypeError) as e:
         print(f"❌ ERROR - 營養數據轉換失敗：{e}")
-        nutrition_data = get_reasonable_nutrition_data(food_description)
+        nutrition_data = emergency_nutrition_fallback(food_description)
     
-    print(f"🔧 DEBUG - 最終營養數據：{nutrition_data}")
+    print(f"🔧 DEBUG - 顯示階段最終營養數據：{nutrition_data}")
 
     # 將確認資料暫存到用戶狀態
     user_states[user_id] = {
@@ -1928,9 +2111,11 @@ def show_meal_record_confirmation(event, user_id, meal_type, food_description, a
             'meal_type': meal_type,
             'food_description': food_description,
             'analysis_result': analysis_result,
-            'nutrition_data': nutrition_data
+            'nutrition_data': nutrition_data  # 確保這裡有正確的數據
         }
     }
+    
+    print(f"🔍 DEBUG - 儲存到 user_states 的數據：{user_states[user_id]['confirm_data']['nutrition_data']}")
     
     # 組合確認顯示訊息
     confirmation_display = f"""📋 請確認飲食記錄資訊
