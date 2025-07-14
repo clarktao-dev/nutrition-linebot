@@ -238,13 +238,19 @@ class UserManager:
         try:
             conn = sqlite3.connect('nutrition_bot.db', timeout=10.0)
             cursor = conn.cursor()
+            
+            print(f"🔍 DEBUG - 查詢每日營養：user_id={user_id}, date={date}")
+            
             cursor.execute('''
                 SELECT * FROM daily_nutrition WHERE user_id = ? AND date = ?
             ''', (user_id, date))
             result = cursor.fetchone()
+            
+            print(f"🔍 DEBUG - 查詢結果：{result}")
+            
             return result
         except Exception as e:
-            print(f"取得每日營養總結錯誤：{e}")
+            print(f"❌ 取得每日營養總結錯誤：{e}")
             return None
         finally:
             if conn:
@@ -301,14 +307,38 @@ class UserManager:
             conn = sqlite3.connect('nutrition_bot.db', timeout=20.0)
             cursor = conn.cursor()
             
-            # 檢查表格是否有營養素欄位
+            print(f"🔍 DEBUG - 開始儲存記錄：{meal_type} - {meal_description}")
+            print(f"🔍 DEBUG - 營養數據：{nutrition_data}")
+            
+            # 🔧 修正：確保營養素欄位存在
             cursor.execute("PRAGMA table_info(meal_records)")
             columns = [column[1] for column in cursor.fetchall()]
+            print(f"🔍 DEBUG - meal_records 表欄位：{columns}")
             
             has_nutrition_columns = all(col in columns for col in ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar'])
+            print(f"🔍 DEBUG - 是否有營養素欄位：{has_nutrition_columns}")
             
-            if has_nutrition_columns and nutrition_data:
-                # 如果有營養素欄位，儲存完整數據
+            if not has_nutrition_columns:
+                # 如果沒有營養素欄位，先添加
+                nutrition_columns = [
+                    ('calories', 'REAL DEFAULT 0'),
+                    ('carbs', 'REAL DEFAULT 0'),
+                    ('protein', 'REAL DEFAULT 0'),
+                    ('fat', 'REAL DEFAULT 0'),
+                    ('fiber', 'REAL DEFAULT 0'),
+                    ('sugar', 'REAL DEFAULT 0')
+                ]
+                
+                for column_name, column_type in nutrition_columns:
+                    try:
+                        cursor.execute(f'ALTER TABLE meal_records ADD COLUMN {column_name} {column_type}')
+                        print(f"✅ 已添加營養素欄位：{column_name}")
+                    except sqlite3.OperationalError as e:
+                        if "duplicate column name" not in str(e):
+                            print(f"❌ 添加欄位 {column_name} 失敗：{e}")
+            
+            # 🔧 修正：總是儲存營養數據
+            if nutrition_data:
                 cursor.execute('''
                     INSERT INTO meal_records 
                     (user_id, meal_type, meal_description, nutrition_analysis,
@@ -320,33 +350,35 @@ class UserManager:
                     nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
                     nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0)
                 ))
+                print(f"✅ 已儲存完整營養數據到 meal_records")
             else:
-                # 如果沒有營養素欄位，只儲存基本數據
+                # 如果沒有營養數據，使用預設值
                 cursor.execute('''
                     INSERT INTO meal_records 
-                    (user_id, meal_type, meal_description, nutrition_analysis)
-                    VALUES (?, ?, ?, ?)
+                    (user_id, meal_type, meal_description, nutrition_analysis,
+                    calories, carbs, protein, fat, fiber, sugar)
+                    VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0)
                 ''', (user_id, meal_type, meal_description, analysis))
+                print(f"⚠️ 儲存記錄但無營養數據")
             
             conn.commit()
-            print(f"已儲存飲食記錄：{meal_type} - {meal_description}")
+            print(f"✅ meal_records 儲存成功")
             
-            # 在同一個連線中更新其他數據
+            # 🔧 修正：確保更新每日營養總結
             if nutrition_data:
                 UserManager._update_daily_nutrition_with_conn(conn, user_id, nutrition_data)
+                print(f"✅ 每日營養總結更新完成")
+            
+            # 更新食物偏好
             UserManager._update_food_preferences_with_conn(conn, user_id, meal_description)
             
             conn.commit()
+            print(f"✅ 所有資料儲存完成")
             
-        except sqlite3.OperationalError as e:
-            if conn:
-                conn.rollback()
-            print(f"資料庫操作錯誤：{e}")
-            raise e
         except Exception as e:
             if conn:
                 conn.rollback()
-            print(f"儲存記錄時發生錯誤：{e}")
+            print(f"❌ 儲存記錄失敗：{e}")
             raise e
         finally:
             if conn:
@@ -359,7 +391,10 @@ class UserManager:
             today = datetime.now().strftime('%Y-%m-%d')
             cursor = conn.cursor()
             
-            # 檢查並創建 daily_nutrition 表
+            print(f"🔍 DEBUG - 更新每日營養：{today}")
+            print(f"🔍 DEBUG - 營養數據：{nutrition_data}")
+            
+            # 🔧 修正：確保 daily_nutrition 表存在且有正確欄位
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS daily_nutrition (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -378,29 +413,58 @@ class UserManager:
                 )
             ''')
             
+            # 🔧 修正：先檢查今日記錄是否存在
             cursor.execute('''
-                INSERT OR IGNORE INTO daily_nutrition (user_id, date) VALUES (?, ?)
+                SELECT total_calories, total_carbs, total_protein, total_fat, meal_count 
+                FROM daily_nutrition WHERE user_id = ? AND date = ?
             ''', (user_id, today))
+            existing_record = cursor.fetchone()
             
+            if existing_record:
+                # 更新現有記錄
+                cursor.execute('''
+                    UPDATE daily_nutrition SET
+                        total_calories = total_calories + ?,
+                        total_carbs = total_carbs + ?,
+                        total_protein = total_protein + ?,
+                        total_fat = total_fat + ?,
+                        total_fiber = total_fiber + ?,
+                        total_sugar = total_sugar + ?,
+                        meal_count = meal_count + 1
+                    WHERE user_id = ? AND date = ?
+                ''', (
+                    nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
+                    nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
+                    nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0),
+                    user_id, today
+                ))
+                print(f"✅ 更新現有每日營養記錄")
+            else:
+                # 插入新記錄
+                cursor.execute('''
+                    INSERT INTO daily_nutrition 
+                    (user_id, date, total_calories, total_carbs, total_protein, total_fat, 
+                     total_fiber, total_sugar, meal_count)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ''', (
+                    user_id, today,
+                    nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
+                    nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
+                    nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0)
+                ))
+                print(f"✅ 插入新的每日營養記錄")
+            
+            # 🔧 新增：驗證儲存結果
             cursor.execute('''
-                UPDATE daily_nutrition SET
-                    total_calories = total_calories + ?,
-                    total_carbs = total_carbs + ?,
-                    total_protein = total_protein + ?,
-                    total_fat = total_fat + ?,
-                    total_fiber = total_fiber + ?,
-                    total_sugar = total_sugar + ?,
-                    meal_count = meal_count + 1
-                WHERE user_id = ? AND date = ?
-            ''', (
-                nutrition_data.get('calories', 0), nutrition_data.get('carbs', 0),
-                nutrition_data.get('protein', 0), nutrition_data.get('fat', 0),
-                nutrition_data.get('fiber', 0), nutrition_data.get('sugar', 0),
-                user_id, today
-            ))
+                SELECT total_calories, total_carbs, total_protein, total_fat, meal_count 
+                FROM daily_nutrition WHERE user_id = ? AND date = ?
+            ''', (user_id, today))
+            verification = cursor.fetchone()
+            print(f"🔍 DEBUG - 儲存後驗證：{verification}")
             
         except Exception as e:
-            print(f"更新每日營養總結失敗：{e}")
+            print(f"❌ 更新每日營養總結失敗：{e}")
+            raise e
 
     @staticmethod
     def _update_food_preferences_with_conn(conn, user_id, meal_description):
@@ -746,7 +810,7 @@ def handle_welcome(event):
 
 # 🔧 新增：處理飲食記錄確認的函數
 def handle_meal_record_confirmation(event, message_text):
-    """處理飲食記錄確認回應"""
+    """處理飲食記錄確認回應（修正版）"""
     user_id = event.source.user_id
     
     if message_text == "✅ 正確，請記錄":
@@ -754,6 +818,9 @@ def handle_meal_record_confirmation(event, message_text):
         confirm_data = user_states[user_id]['confirm_data']
         
         try:
+            print(f"🔍 DEBUG - 開始確認儲存流程")
+            print(f"🔍 DEBUG - 確認數據：{confirm_data}")
+            
             # 儲存飲食記錄
             UserManager.save_meal_record(
                 user_id, 
@@ -766,12 +833,22 @@ def handle_meal_record_confirmation(event, message_text):
             # 清除確認狀態
             user_states[user_id] = {'step': 'normal'}
             
+            # 🔧 新增：立即驗證儲存結果
+            daily_nutrition = UserManager.get_daily_nutrition(user_id)
+            print(f"🔍 DEBUG - 儲存後每日營養：{daily_nutrition}")
+            
             # 發送成功確認訊息
+            nutrition_data = confirm_data['nutrition_data']
             success_text = f"""✅ 飲食記錄已成功儲存！
 
 📝 記錄內容：{confirm_data['food_description']}
 🍽️ 餐型：{confirm_data['meal_type']}
-📊 營養數據已加入今日統計
+
+📊 營養數據已加入今日統計：
+• 熱量：{nutrition_data.get('calories', 0):.0f} 大卡
+• 碳水：{nutrition_data.get('carbs', 0):.1f} g  
+• 蛋白質：{nutrition_data.get('protein', 0):.1f} g
+• 脂肪：{nutrition_data.get('fat', 0):.1f} g
 
 💡 輸入「今日進度」可查看累計營養攝取"""
             
@@ -790,6 +867,7 @@ def handle_meal_record_confirmation(event, message_text):
             # 清除確認狀態
             user_states[user_id] = {'step': 'normal'}
             
+            print(f"❌ 確認儲存失敗：{e}")
             error_message = f"抱歉，儲存記錄時發生錯誤：{str(e)}\n\n請重新輸入你的飲食內容。"
             line_bot_api.reply_message(
                 event.reply_token,
@@ -966,17 +1044,31 @@ def get_today_meals(user_id):
         conn = sqlite3.connect('nutrition_bot.db', timeout=10.0)
         cursor = conn.cursor()
         today = datetime.now().strftime('%Y-%m-%d')
+        
+        print(f"🔍 DEBUG - 查詢今日餐點：user_id={user_id}, date={today}")
+        
+        # 🔧 修正：檢查表格結構
+        cursor.execute("PRAGMA table_info(meal_records)")
+        columns = [column[1] for column in cursor.fetchall()]
+        print(f"🔍 DEBUG - meal_records 欄位：{columns}")
+        
         cursor.execute('''
             SELECT meal_type, meal_description, nutrition_analysis, 
-                   DATE(recorded_at) as meal_date, TIME(recorded_at) as meal_time
+                   DATE(recorded_at) as meal_date, TIME(recorded_at) as meal_time,
+                   calories, carbs, protein, fat
             FROM meal_records 
             WHERE user_id = ? AND DATE(recorded_at) = ?
             ORDER BY recorded_at ASC
         ''', (user_id, today))
         meals = cursor.fetchall()
+        
+        print(f"🔍 DEBUG - 今日餐點查詢結果：{len(meals)} 餐")
+        for meal in meals:
+            print(f"🔍 DEBUG - 餐點詳細：{meal}")
+        
         return meals
     except Exception as e:
-        print(f"取得今日餐點錯誤：{e}")
+        print(f"❌ 取得今日餐點錯誤：{e}")
         return []
     finally:
         if conn:
@@ -3117,6 +3209,43 @@ def handle_image_message(event):
         TextSendMessage(text=guide_text, quick_reply=quick_reply)
     )
 
+def check_database_structure():
+    """檢查並修正資料庫結構"""
+    conn = None
+    try:
+        conn = sqlite3.connect('nutrition_bot.db', timeout=20.0)
+        cursor = conn.cursor()
+        
+        # 檢查 meal_records 表結構
+        cursor.execute("PRAGMA table_info(meal_records)")
+        meal_columns = [column[1] for column in cursor.fetchall()]
+        print(f"🔍 DEBUG - meal_records 現有欄位：{meal_columns}")
+        
+        # 檢查 daily_nutrition 表結構  
+        cursor.execute("PRAGMA table_info(daily_nutrition)")
+        daily_columns = [column[1] for column in cursor.fetchall()]
+        print(f"🔍 DEBUG - daily_nutrition 現有欄位：{daily_columns}")
+        
+        # 確保營養素欄位存在
+        required_nutrition_columns = ['calories', 'carbs', 'protein', 'fat', 'fiber', 'sugar']
+        
+        for column in required_nutrition_columns:
+            if column not in meal_columns:
+                try:
+                    cursor.execute(f'ALTER TABLE meal_records ADD COLUMN {column} REAL DEFAULT 0')
+                    print(f"✅ 已添加 meal_records.{column}")
+                except sqlite3.OperationalError as e:
+                    print(f"❌ 添加 meal_records.{column} 失敗：{e}")
+        
+        conn.commit()
+        print("✅ 資料庫結構檢查完成")
+        
+    except Exception as e:
+        print(f"❌ 資料庫結構檢查失敗：{e}")
+    finally:
+        if conn:
+            conn.close()    
+
 def determine_meal_type(description):
     """判斷餐型"""
     description_lower = description.lower()
@@ -3272,6 +3401,7 @@ if __name__ == "__main__":
         keep_alive_thread.daemon = True
         keep_alive_thread.start()
         start_scheduler()
+        check_database_structure()
         port = int(os.environ.get('PORT', 5000))
         print(f"啟動20年經驗糖尿病專業營養師機器人在端口 {port}")
         print("主要功能：")
